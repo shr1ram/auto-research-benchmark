@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-research-benchmark"
+version = "0.1.0"
+description = "Benchmark harness with pluggable entry/exit adapters for arbitrary autoresearch systems (AIDE, continual-auto-research). First benchmark: MLE-Bench Lite."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Shriram" }]
+dependencies = [
+    "pyyaml>=6.0",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+# Pulled in only when actually running the MLE-bench benchmark on a box.
+mlebench = []
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+arbench = "arbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

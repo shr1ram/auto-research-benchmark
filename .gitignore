@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# secrets / local env (never commit keys)
+.env
+*.env.local
+configs/*.env
+!configs/*.env.example
+
+# run artifacts / data (huge; lives on the project FS)
+runs/
+workspaces/
+logs/
+data/
+*.csv
+!tests/**/*.csv
+
+# tooling
+.pytest_cache/
+.uv-cache/
+.DS_Store
