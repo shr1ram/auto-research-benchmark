@@ -56,12 +56,17 @@ class AIDEAdapter(AutoResearchAdapter):
         prev_cwd = Path.cwd()
         os.chdir(aide_root)
         try:
-            # AIDE selects its model from OmegaConf, which merges OmegaConf.from_cli()
-            # (i.e. sys.argv dotlist overrides) at import/config-load time. The
-            # default is o4-mini, which the LiteLLM proxy does NOT serve — so we
-            # MUST override agent.code.model / agent.feedback.model to the backend's
-            # model (Kimi-K2.6), else AIDE 404s. We inject the overrides into argv
-            # for the duration of the config load + run.
+            # AIDE selects its model from OmegaConf, merging OmegaConf.from_cli()
+            # (sys.argv dotlist) at config-load. Its stock default is o4-mini, which
+            # (a) the LiteLLM proxy doesn't serve and (b) matches AIDE's ^o\d openai
+            # regex, forcing the OpenAI *responses* API at api.openai.com -> 401.
+            #
+            # IMPORTANT: under the arbench CLI, argv is already owned by arbench's
+            # click parser, so AIDE's from_cli() does NOT reliably pick up these
+            # overrides. The robust fix lives in the FORK: aide/utils/config.yaml has
+            # its three model: fields set to the backend model (Kimi-K2.6). We still
+            # inject argv overrides here as a best-effort secondary path for when AIDE
+            # is driven directly (not via the arbench click CLI).
             overrides = [
                 f"agent.code.model={backend.model}",
                 f"agent.feedback.model={backend.feedback_model}",
