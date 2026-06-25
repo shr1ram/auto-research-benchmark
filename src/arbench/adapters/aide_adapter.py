@@ -40,6 +40,9 @@ class AIDEAdapter(AutoResearchAdapter):
         self.steps = int(os.environ.get("AIDE_STEPS", steps))
         self.backend = backend or os.environ.get("ARBENCH_LLM_BACKEND", "litellm")
         self.model = model
+        # Where the forked AIDE repo lives (for stamping its git SHA into the
+        # run trace). Overridable via $AIDE_REPO; else None (SHA omitted).
+        self.repo_dir = os.environ.get("AIDE_REPO")
 
     def prepare(self, task: Task, workspace: Path) -> None:
         # Point AIDE's OpenAI-compatible client at the chosen backend (LiteLLM/

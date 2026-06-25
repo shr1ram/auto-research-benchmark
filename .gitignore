@@ -14,13 +14,24 @@ venv/
 configs/*.env
 !configs/*.env.example
 
-# run artifacts / data (huge; lives on the project FS)
+# run artifacts / data (huge; lives on the project FS, never committed)
 runs/
 workspaces/
 logs/
 data/
+mlebench-data/
+mle-bench/
+aideml/
 *.csv
 !tests/**/*.csv
+# full-run trace bundles (run.json, llm_calls.jsonl, artifacts/) live under runs/
+llm_calls.jsonl
+run.json
+# downloader logs/progress from data prep
+*.progress
+*.nohup
+prepare_all.log
+dl_*.log
 
 # tooling
 .pytest_cache/
