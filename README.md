@@ -80,6 +80,41 @@ arbench run \
 The harness itself imports and tests cleanly **without** AIDE or mlebench
 installed — those are only needed to actually run/grade.
 
+## Parallel sweeps across GPU boxes (`arbench batch`)
+
+Runs many `(task × seed × arm)` jobs concurrently across GPU boxes — each one a
+full traced bundle. Self-contained: it discovers free boxes (ssh `nvidia-smi`),
+leases them atomically on the shared FS (no double-claims), dispatches
+`arbench run` over ssh, tracks `manifest.json`, releases boxes as jobs finish,
+and is **resumable** (a job whose `run.json` exists is skipped).
+
+```bash
+arbench batch \
+  --adapter aide --benchmark mlebench_lite \
+  --tasks all-lite            # or a,b,c  or @file \
+  --seeds 3                   # independent repeats -> variance/error bars \
+  --arms baseline             # later: baseline,continual \
+  --max-boxes 8 \
+  --steps 8 --backend litellm --model Kimi-K2.6 \
+  --data-dir "$MLEBENCH_DATA_DIR" \
+  --venv  "$ROOT/.venv/bin/activate"   # shared-FS venv each box sources \
+  --repo-dir "$ROOT" \
+  --out runs/sweep-001
+```
+
+Each job lands in `runs/sweep-001/<arm>/<task>-seed<n>/run.json`. The scheduler
+caches box discovery (spares the ssh jump host) and kills+frees any job exceeding
+`--job-timeout`. For long sweeps, launch **detached on a lab box** so it survives
+your laptop disconnecting:
+
+```bash
+# on a lab box that can ssh siblings:
+scripts/run_sweep.sh baseline-v1 all-lite 3 8 8     # name tasks seeds max-boxes steps
+tail -f runs/baseline-v1/sweep.log
+```
+
+Re-running the same sweep name resumes it (done jobs skipped).
+
 ## Tests
 
 ```bash

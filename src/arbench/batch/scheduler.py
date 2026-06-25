@@ -32,6 +32,18 @@ _SSH_OPTS = [
 ]
 
 
+def _ssh_payload(bash_cmd: str) -> str:
+    """Wrap a bash command so it runs correctly on the lab boxes.
+
+    The login shell on the UCL lab boxes is csh, which can't parse the bash
+    `export ...; . activate; ...` payload. Base64-encode it and decode+run under
+    `bash -l` — immune to csh and to all quoting issues across the ssh boundary.
+    """
+    import base64
+    b64 = base64.b64encode(bash_cmd.encode()).decode()
+    return f"echo {b64} | base64 -d | bash -l"
+
+
 def _remote_run_cmd(job: Job, *, venv_activate: str, repo_dir: str,
                     data_dir: str, env_exports: str) -> str:
     """The bash run on the chosen box: activate venv, export env, `arbench run`."""
@@ -84,12 +96,18 @@ def run_batch(
     box_pattern: str | None = None,
     explicit_boxes: list[str] | None = None,
     poll_s: float = 15.0,
+    discovery_interval_s: float = 90.0,   # re-probe free boxes at most this often
+    job_timeout_s: float = 7200.0,        # kill+free a box if a job hangs (2h default)
+    max_attempts: int = 2,                # re-queue a failed job (e.g. box died) this many times
     log=print,
 ) -> dict:
     """Run all jobs across up to max_boxes GPU boxes. Returns a summary dict.
 
     Skips already-done jobs (resume). Releases each box as its job finishes and
-    reassigns it to the next pending job.
+    reassigns it to the next pending job. Box discovery is cached for
+    discovery_interval_s so we don't hammer the ssh jump host every poll. A job
+    exceeding job_timeout_s is killed and its box freed (a hung run can't wedge
+    the sweep).
     """
     sweep_dir = Path(sweep_dir)
     sweep_dir.mkdir(parents=True, exist_ok=True)
@@ -106,52 +124,84 @@ def run_batch(
     log(f"[batch] {len(candidates)} candidate boxes: {', '.join(candidates[:8])}"
         + (" ..." if len(candidates) > 8 else ""))
 
-    running: dict[str, tuple[Job, subprocess.Popen]] = {}   # box -> (job, proc)
+    running: dict[str, tuple[Job, subprocess.Popen, float]] = {}  # box -> (job, proc, started)
     results: list[dict] = []
     self_held: set[str] = set()
+    _free_cache: list[str] = []
+    _free_cache_ts: list[float] = [0.0]   # mutable holder for closure
+    attempts: dict[str, int] = {}         # job.name -> times dispatched
 
     def _dispatch(job: Job, box: str) -> None:
+        attempts[job.name] = attempts.get(job.name, 0) + 1
         cmd = _remote_run_cmd(job, venv_activate=venv_activate, repo_dir=repo_dir,
                               data_dir=data_dir, env_exports=env_exports)
         logf = open(job.out_dir / "dispatch.log", "w")
-        proc = subprocess.Popen(["ssh", *_SSH_OPTS, box, cmd],
+        proc = subprocess.Popen(["ssh", *_SSH_OPTS, box, _ssh_payload(cmd)],
                                 stdout=logf, stderr=subprocess.STDOUT)
-        running[box] = (job, proc)
-        manifest.update(job, status="running", box=box, started_at=time.time())
-        log(f"[batch] -> {box}: {job.name}")
+        running[box] = (job, proc, time.monotonic())
+        manifest.update(job, status="running", box=box, attempt=attempts[job.name],
+                        started_at=time.time())
+        log(f"[batch] -> {box}: {job.name} (attempt {attempts[job.name]})")
+
+    def _reap(box, job, proc, killed=False):
+        ok = (not killed) and job.is_done()
+        score = None
+        if ok:
+            try:
+                score = json.loads((job.out_dir / "run.json").read_text())["score"]["value"]
+            except Exception:
+                pass
+        boxmod.release(sweep_dir, box); self_held.discard(box)
+        del running[box]
+
+        # Re-queue a non-success job (box died / ssh failed / transient) until
+        # attempts are exhausted. A genuine graded failure still writes run.json,
+        # so it's `ok` and never re-queued.
+        if not ok and attempts.get(job.name, 0) < max_attempts:
+            manifest.update(job, status="requeued", rc=proc.returncode,
+                            attempt=attempts.get(job.name, 0))
+            log(f"[batch] ~~ {box}: {job.name} {'TIMEOUT' if killed else 'FAILED'} "
+                f"-> requeue (attempt {attempts.get(job.name,0)}/{max_attempts})")
+            pending.append(job)
+            return
+
+        status = "timeout" if killed else ("done" if ok else "failed")
+        manifest.update(job, status=status, rc=proc.returncode, score=score,
+                        finished_at=time.time())
+        results.append({"job": job.name, "ok": ok, "rc": proc.returncode,
+                        "score": score, "status": status})
+        log(f"[batch] <- {box}: {job.name} {status.upper()}"
+            + (f" score={score}" if score is not None else ""))
 
     try:
         while pending or running:
-            # 1) reap finished
+            now = time.monotonic()
+            # 1) reap finished / kill timed-out
             for box in list(running):
-                job, proc = running[box]
+                job, proc, started = running[box]
                 if proc.poll() is not None:
-                    ok = job.is_done()  # run.json present => success
-                    score = None
-                    if ok:
-                        try:
-                            score = json.loads((job.out_dir / "run.json").read_text())["score"]["value"]
-                        except Exception:
-                            pass
-                    manifest.update(job, status="done" if ok else "failed",
-                                    rc=proc.returncode, score=score,
-                                    finished_at=time.time())
-                    results.append({"job": job.name, "ok": ok, "rc": proc.returncode, "score": score})
-                    log(f"[batch] <- {box}: {job.name} {'OK' if ok else 'FAILED'}"
-                        + (f" score={score}" if score is not None else ""))
-                    boxmod.release(sweep_dir, box); self_held.discard(box)
-                    del running[box]
+                    _reap(box, job, proc)
+                elif now - started > job_timeout_s:
+                    log(f"[batch] !! {box}: {job.name} exceeded {job_timeout_s:.0f}s — killing")
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=20)
+                    except Exception:
+                        pass
+                    _reap(box, job, proc, killed=True)
 
-            # 2) fill free slots with free boxes
+            # 2) fill free slots (cached discovery to spare the jump host)
             if pending and len(running) < max_boxes:
-                free = boxmod.free_boxes([b for b in candidates if b not in running])
-                for box in free:
-                    if not pending or len(running) >= max_boxes:
-                        break
-                    if box in running:
+                if now - _free_cache_ts[0] > discovery_interval_s or not _free_cache:
+                    busy = set(running) | set(boxmod.held_leases(sweep_dir))
+                    probe = [b for b in candidates if b not in busy]
+                    _free_cache[:] = boxmod.free_boxes(probe)
+                    _free_cache_ts[0] = now
+                    log(f"[batch] discovery: {len(_free_cache)} free of {len(probe)} probed")
+                while pending and len(running) < max_boxes and _free_cache:
+                    box = _free_cache.pop(0)
+                    if box in running or not boxmod.try_lease(sweep_dir, box):
                         continue
-                    if not boxmod.try_lease(sweep_dir, box):
-                        continue  # claimed by another scheduler/sweep
                     self_held.add(box)
                     _dispatch(pending.pop(0), box)
 
