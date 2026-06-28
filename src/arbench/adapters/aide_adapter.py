@@ -47,7 +47,16 @@ class AIDEAdapter(AutoResearchAdapter):
     def prepare(self, task: Task, workspace: Path) -> None:
         # Point AIDE's OpenAI-compatible client at the chosen backend (LiteLLM/
         # Kimi by default). Mutates os.environ so the AIDE import picks it up.
-        configure_aide_env(self.backend, model=self.model)
+        b = configure_aide_env(self.backend, model=self.model)
+        # CRITICAL: AIDE's determine_provider() routes a non-gpt/claude/gemini
+        # model (Kimi) to its OpenAI chat path ONLY if OPENAI_BASE_URL is set;
+        # otherwise it falls through to OpenRouter and mis-routes/crashes. Our
+        # configure_aide_env sets it, but guard loudly in case env was overridden.
+        if not os.environ.get("OPENAI_BASE_URL"):
+            raise RuntimeError(
+                f"OPENAI_BASE_URL is unset; AIDE would mis-route model {b.model!r} "
+                "(non-OpenAI model needs OPENAI_BASE_URL to hit the chat path)."
+            )
 
     def run(self, task: Task, workspace: Path) -> Path:
         workspace = Path(workspace)

@@ -170,3 +170,32 @@ def test_hung_job_is_timed_out(tmp_path, patched, monkeypatch):
     assert bx.held_leases(tmp_path) == []
     man = json.loads((tmp_path / "manifest.json").read_text())
     assert man["jobs"]["baseline/t1-seed0"]["status"] == "timeout"
+
+
+def test_dispatch_failure_requeues_not_loses_job(tmp_path, patched, monkeypatch):
+    """If Popen/mkdir fails for a box, the job must stay pending (not be lost)
+    and the lease released — one bad box can't abort the sweep."""
+    calls = {"n": 0}
+    real_popen = sch.subprocess.Popen
+
+    def flaky_popen(args, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("simulated ssh/Popen failure on first box")
+        # subsequent dispatches: run a body that writes run.json
+        import base64
+        cmd = base64.b64decode(args[-1].split(" ", 2)[1]).decode()
+        body, _, tail = cmd.partition(" --workspace ")
+        return real_popen([sys.executable, "-c", body, "--workspace", tail.strip()], **kw)
+    monkeypatch.setattr(sch, "_remote_run_cmd",
+                        lambda job, **kw: _fake_run_cmd(True) + f" --workspace {job.out_dir}")
+    monkeypatch.setattr(sch.subprocess, "Popen", flaky_popen)
+
+    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="aide",
+                           benchmark="b", sweep_dir=tmp_path, steps=1, backend="litellm", model=None)
+    summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
+                            venv_activate="x", repo_dir="x", data_dir="x",
+                            poll_s=0.05, discovery_interval_s=0.0, log=lambda *a: None)
+    # the first dispatch failed but the job was re-dispatched and succeeded
+    assert summary["ok"] == 1
+    assert bx.held_leases(tmp_path) == []   # no leaked lease from the failed dispatch

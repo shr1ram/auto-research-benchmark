@@ -131,17 +131,29 @@ def run_batch(
     _free_cache_ts: list[float] = [0.0]   # mutable holder for closure
     attempts: dict[str, int] = {}         # job.name -> times dispatched
 
-    def _dispatch(job: Job, box: str) -> None:
+    def _dispatch(job: Job, box: str) -> bool:
+        """Dispatch job to box. Returns True on success. On failure (mkdir/open/
+        Popen error) it does NOT raise — releases the lease, leaves the job for
+        the caller to re-queue, so one bad box can't abort the whole sweep."""
+        try:
+            cmd = _remote_run_cmd(job, venv_activate=venv_activate, repo_dir=repo_dir,
+                                  data_dir=data_dir, env_exports=env_exports)
+            # Close the parent's copy of the fd after Popen dups it into the child,
+            # else every dispatch leaks an fd (sweeps exhaust the fd table).
+            with open(job.out_dir / "dispatch.log", "w") as logf:
+                proc = subprocess.Popen(["ssh", *_SSH_OPTS, box, _ssh_payload(cmd)],
+                                        stdout=logf, stderr=subprocess.STDOUT)
+        except Exception as e:
+            boxmod.release(sweep_dir, box); self_held.discard(box)
+            manifest.update(job, status="dispatch_error", box=box, error=str(e)[:200])
+            log(f"[batch] xx {box}: {job.name} dispatch failed ({e}) — leaving pending")
+            return False
         attempts[job.name] = attempts.get(job.name, 0) + 1
-        cmd = _remote_run_cmd(job, venv_activate=venv_activate, repo_dir=repo_dir,
-                              data_dir=data_dir, env_exports=env_exports)
-        logf = open(job.out_dir / "dispatch.log", "w")
-        proc = subprocess.Popen(["ssh", *_SSH_OPTS, box, _ssh_payload(cmd)],
-                                stdout=logf, stderr=subprocess.STDOUT)
         running[box] = (job, proc, time.monotonic())
         manifest.update(job, status="running", box=box, attempt=attempts[job.name],
                         started_at=time.time())
         log(f"[batch] -> {box}: {job.name} (attempt {attempts[job.name]})")
+        return True
 
     def _reap(box, job, proc, killed=False):
         ok = (not killed) and job.is_done()
@@ -184,8 +196,12 @@ def run_batch(
                 elif now - started > job_timeout_s:
                     log(f"[batch] !! {box}: {job.name} exceeded {job_timeout_s:.0f}s — killing")
                     try:
-                        proc.kill()
-                        proc.wait(timeout=20)
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=10)
+                        except Exception:
+                            proc.kill()
+                            proc.wait(timeout=10)
                     except Exception:
                         pass
                     _reap(box, job, proc, killed=True)
@@ -203,12 +219,27 @@ def run_batch(
                     if box in running or not boxmod.try_lease(sweep_dir, box):
                         continue
                     self_held.add(box)
-                    _dispatch(pending.pop(0), box)
+                    job = pending[0]
+                    if _dispatch(job, box):
+                        pending.pop(0)        # dispatched — remove from queue
+                    # else: _dispatch released the lease and left job in pending;
+                    # drop this box from the cache so we try a different one next.
 
             if pending or running:
                 time.sleep(poll_s)
     finally:
-        # release any boxes we still hold (e.g. on Ctrl-C)
+        # On Ctrl-C/exception, kill the ssh children FIRST (else remote arbench
+        # runs keep using GPUs after we've released the lease), THEN release.
+        for box in list(running):
+            job, proc, _ = running[box]
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+            except Exception:
+                pass
         for box in list(self_held):
             boxmod.release(sweep_dir, box)
 

@@ -21,17 +21,25 @@ def register_benchmark(name: str, factory: Callable[..., Benchmark]) -> None:
     _BENCHMARKS[name] = factory
 
 
+# import failures captured here (surfaced via available()), so a real bug in an
+# adapter/benchmark module isn't silently swallowed as "optional dep missing".
+_LOAD_ERRORS: dict[str, str] = {}
+
+
 def _load_builtins() -> None:
-    """Import built-in adapters/benchmarks lazily; ignore ones whose optional
-    deps are absent so the package still imports on a bare machine."""
-    try:
-        from arbench.adapters import aide_adapter  # noqa: F401  (self-registers)
-    except Exception:
-        pass
-    try:
-        from arbench.benchmarks.mlebench_lite import benchmark as _mb  # noqa: F401
-    except Exception:
-        pass
+    """Import built-in adapters/benchmarks lazily. Tolerate a MISSING optional
+    dependency (ImportError) so the package imports on a bare machine, but let
+    any OTHER error (SyntaxError, a bug in the module) propagate — and record the
+    ImportError messages so they're visible rather than silently lost."""
+    for label, importer in (
+        ("aide", lambda: __import__("arbench.adapters.aide_adapter", fromlist=["*"])),
+        ("mlebench_lite", lambda: __import__("arbench.benchmarks.mlebench_lite.benchmark", fromlist=["*"])),
+    ):
+        try:
+            importer()
+        except ImportError as e:
+            _LOAD_ERRORS[label] = str(e)  # optional dep absent — recorded, not hidden
+        # any non-ImportError (real bug) intentionally propagates
 
 
 def get_adapter(name: str, **kwargs) -> AutoResearchAdapter:
@@ -52,4 +60,7 @@ def get_benchmark(name: str, **kwargs) -> Benchmark:
 
 def available() -> dict[str, list[str]]:
     _load_builtins()
-    return {"adapters": sorted(_ADAPTERS), "benchmarks": sorted(_BENCHMARKS)}
+    out = {"adapters": sorted(_ADAPTERS), "benchmarks": sorted(_BENCHMARKS)}
+    if _LOAD_ERRORS:
+        out["unavailable"] = dict(_LOAD_ERRORS)  # optional deps that failed to import
+    return out

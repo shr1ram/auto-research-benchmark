@@ -36,9 +36,11 @@ _DEFAULT = (1.00, 3.00)
 
 def _normalise(model: str) -> str:
     m = (model or "").strip().lower()
-    # strip an "openrouter/" or "provider/" prefix if present
+    # strip ALL provider prefixes ("openrouter/anthropic/claude-..." -> "claude-...")
+    # by keeping only the last path segment, else multi-segment ids silently miss
+    # the price table and fall back to the default.
     if "/" in m:
-        m = m.split("/", 1)[1]
+        m = m.rsplit("/", 1)[-1]
     return m
 
 

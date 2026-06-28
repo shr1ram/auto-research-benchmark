@@ -99,11 +99,23 @@ class MLEBenchLite(Benchmark):
                                  is_higher_better=not task.metadata.get("is_lower_better", False))
 
         is_higher_better = not bool(getattr(report, "is_lower_better", False))
+        # Distinguish "field absent" (a harness/version mismatch worth surfacing)
+        # from a genuine invalid submission.
+        if not hasattr(report, "valid_submission"):
+            return Score.invalid(
+                "mlebench report has no 'valid_submission' field "
+                f"(available: {sorted(vars(report))[:12] if hasattr(report,'__dict__') else '?'})",
+                is_higher_better=is_higher_better)
         if not getattr(report, "valid_submission", False):
             return Score.invalid("mlebench marked submission invalid",
                                  is_higher_better=is_higher_better)
+        # valid_submission=True but no score => still invalid (don't emit a
+        # 'valid' Score with value=None, which breaks the valid/None contract).
+        if report.score is None:
+            return Score.invalid("mlebench returned no score despite valid_submission",
+                                 is_higher_better=is_higher_better)
         return Score(
-            value=float(report.score) if report.score is not None else None,
+            value=float(report.score),
             valid=True,
             is_higher_better=is_higher_better,
             details={

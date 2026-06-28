@@ -74,16 +74,43 @@ def run_one(
     submission_path = task.submission_path(workspace)
 
     # Point the LLM backend's call-trace sink at this run's JSONL (the AIDE fork
-    # appends one record per call). Saved+restored so concurrent runs are isolated.
+    # appends one record per call). NOTE: $ARBENCH_LLM_TRACE is process-global —
+    # run_one is one-run-per-process, NOT thread/async safe. The batch scheduler
+    # runs each job in its own ssh'd process, so that's fine.
     prev_trace = os.environ.get(LLM_TRACE_ENV)
     if trace:
-        os.environ[LLM_TRACE_ENV] = str(workspace / "llm_calls.jsonl")
+        trace_path = workspace / "llm_calls.jsonl"
+        # Truncate any stale trace from a prior (failed/re-run) attempt into the
+        # SAME workspace, else record_llm_call's append mode double-counts
+        # tokens/cost/latency across attempts.
+        try:
+            if trace_path.exists():
+                trace_path.unlink()
+            art = workspace / "artifacts"
+            if art.exists():
+                for p in art.glob("*"):
+                    p.unlink()
+        except Exception:
+            pass
+        os.environ[LLM_TRACE_ENV] = str(trace_path)
+
+    # Resolve the real model name via the backend resolver when the adapter
+    # didn't pin one (adapter.model is often None — the model is the backend's
+    # default, e.g. Kimi). Falls back to env, then "unknown". Used both for
+    # meta.model AND as the per-call cost fallback, so it must be the real model.
+    resolved_model = getattr(adapter, "model", None) or os.environ.get("ARBENCH_LLM_MODEL")
+    if not resolved_model:
+        try:
+            from arbench.llm.backends import resolve_backend
+            resolved_model = resolve_backend(getattr(adapter, "backend", "litellm")).model
+        except Exception:
+            resolved_model = "unknown"
 
     meta = RunMeta(
         adapter=adapter.name,
         benchmark=benchmark.name,
         task_id=task_id,
-        model=getattr(adapter, "model", None) or os.environ.get("ARBENCH_LLM_MODEL", "unknown"),
+        model=resolved_model,
         backend=getattr(adapter, "backend", None) or os.environ.get("ARBENCH_LLM_BACKEND", "unknown"),
         steps=getattr(adapter, "steps", None),
         started_at=time.time(),
