@@ -33,6 +33,7 @@ def _load_builtins() -> None:
     ImportError messages so they're visible rather than silently lost."""
     for label, importer in (
         ("aide", lambda: __import__("arbench.adapters.aide_adapter", fromlist=["*"])),
+        ("continual", lambda: __import__("arbench.adapters.continual_adapter", fromlist=["*"])),
         ("mlebench_lite", lambda: __import__("arbench.benchmarks.mlebench_lite.benchmark", fromlist=["*"])),
     ):
         try:
