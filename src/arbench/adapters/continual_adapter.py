@@ -54,8 +54,11 @@ HARD REQUIREMENTS (a violation scores the attempt as failed):
    competition metric and prints it as the FINAL stdout line, EXACTLY:
        SCORE=<number>
    (line-anchored, e.g. `SCORE=0.7421`). Print nothing after it.
-5. Be robust: set seeds, guard against missing columns, keep runtime modest
-   (minutes, not hours). Prefer strong simple baselines first, then improve.
+5. Be robust AND FAST: set seeds, guard against missing columns, and keep runtime
+   within the RUNTIME BUDGET stated in the task (a script that exceeds it is killed
+   and scored as failed). Prefer a strong SIMPLE baseline first (cheap features,
+   a fast model, few CV folds), then improve only if time allows. Favour
+   linear/logistic or a small GBM over anything that scales badly with feature count.
 
 To improve over the incumbent, change ONE meaningful thing (a research move:
 better features, a different model class, handling imbalance/leakage, tuning,
@@ -90,14 +93,22 @@ class _LocalExecRunner:
     iteration produced so the adapter can grade the BEST iteration's submission
     (not merely the last)."""
 
-    def __init__(self, workspace: Path, data_dir: Path, timeout_s: int = 1800):
+    def __init__(self, workspace: Path, data_dir: Path, timeout_s: int = 600):
         self.workspace = Path(workspace)
         self.data_dir = Path(data_dir)
-        self.timeout_s = timeout_s
+        # Per-iteration execution ceiling. Default 10 min: generous enough for an
+        # honest CV on a cheap task, tight enough that a runaway/hung script can't
+        # burn the whole run. Override with CAR_EXEC_TIMEOUT_S. (AIDE's own cap is
+        # 3600s but it steers the model to fast code + feeds back exec results;
+        # we do the latter via last_exec_feedback below.)
+        self.timeout_s = int(os.environ.get("CAR_EXEC_TIMEOUT_S", timeout_s))
         self.best_dir = self.workspace / "car_best"      # snapshot of best submission
         self.iters_dir = self.workspace / "car_iters"    # per-iter scripts + logs
         self.iters_dir.mkdir(parents=True, exist_ok=True)
         self.last_trace: Optional[dict] = None
+        # Structured outcome of the most recent run, fed back to the proposer so it
+        # can self-correct (the key thing AIDE has that a bare hill-climber lacks).
+        self.last_exec_feedback: Optional[str] = None
 
     def run(self, proposal: str, iteration: int) -> Tuple[Optional[float], str]:
         from continual_auto_research.core import scoring
@@ -118,24 +129,63 @@ class _LocalExecRunner:
         env["MLEBENCH_DATA_DIR"] = str(self.data_dir)
         env["DATA_DIR"] = str(self.data_dir)  # also expose the common name
 
+        status = "ok"
+        stderr_text = ""
         try:
             proc = subprocess.run(
                 [sys.executable, "solution.py"],
                 cwd=str(rundir), env=env,
                 capture_output=True, text=True, timeout=self.timeout_s,
             )
-            output = (proc.stdout or "") + "\n[stderr]\n" + (proc.stderr or "")
+            stderr_text = proc.stderr or ""
+            output = (proc.stdout or "") + "\n[stderr]\n" + stderr_text
+            if proc.returncode != 0:
+                status = f"nonzero_exit({proc.returncode})"
         except subprocess.TimeoutExpired as exc:
-            output = f"TIMEOUT after {self.timeout_s}s\n{exc.stdout or ''}\n{exc.stderr or ''}"
+            status = f"timeout_{self.timeout_s}s"
+            stderr_text = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+            output = f"TIMEOUT after {self.timeout_s}s\n{exc.stdout or ''}\n{stderr_text}"
         except Exception as exc:  # noqa: BLE001
+            status = f"runner_error({type(exc).__name__})"
             output = f"runner error: {type(exc).__name__}: {exc}"
+
+        # Persist the script's stdout/stderr so a failed iteration is debuggable
+        # (and so the experiment run keeps a per-iteration audit trail).
+        try:
+            (rundir / "exec_log.txt").write_text(output)
+        except Exception:  # noqa: BLE001 — logging must never break the run
+            pass
 
         # Score from the SCORE= sentinel (no result.json in this local path).
         score = scoring.resolve_score(str(rundir), output)
+        wrote_sub = sub.exists()
+
+        # Build the feedback the NEXT proposal will see, so the loop self-corrects
+        # like AIDE does (exec outcome -> model). Surface the failure mode crisply
+        # plus a stderr tail; on success, confirm the score + submission.
+        if status == "ok" and score is not None and wrote_sub:
+            self.last_exec_feedback = (
+                f"Iter {iteration}: ran OK, SCORE={score}, submission.csv written."
+            )
+        else:
+            why = []
+            if status != "ok":
+                why.append(f"execution {status}")
+            if score is None:
+                why.append("no valid SCORE= line printed")
+            if not wrote_sub:
+                why.append("no submission.csv written")
+            tail = (stderr_text or output)[-800:].strip()
+            self.last_exec_feedback = (
+                f"Iter {iteration} FAILED ({'; '.join(why) or 'unknown'}). "
+                f"Keep the next solution FASTER and SIMPLER (must finish well under "
+                f"{self.timeout_s}s), and fix the error below. Last error/output tail:\n{tail}"
+            )
 
         self.last_trace = {
             "runner": "car_local_exec", "iteration": iteration,
-            "script": str(script), "score": score,
+            "script": str(script), "score": score, "status": status,
+            "wrote_submission": wrote_sub,
             "output": output[-4000:],  # tail, for the trace window
         }
         return score, output
@@ -195,16 +245,29 @@ class ContinualAdapter(AutoResearchAdapter):
             "----- hill-climbing context (incumbent + recent attempts) -----\n"
         )
 
+        direction = "min" if task.metadata.get("is_lower_better") else "max"
+        runner = _LocalExecRunner(workspace, task.data_dir)
+
+        # Tell the proposer the runtime ceiling (AIDE does the same) so it self-
+        # limits code complexity rather than writing something that times out.
+        budget_line = (
+            f"RUNTIME BUDGET: each solution must finish well under "
+            f"{runner.timeout_s} seconds or it is killed and scored as failed.\n\n"
+        )
+
         def propose(context: str) -> str:
-            full = task_preamble + (context or "")
+            # Prepend the previous iteration's execution outcome so the proposer
+            # can fix failures/timeouts — the feedback loop a bare hill-climber's
+            # score-only context lacks, and AIDE has via its feedback model.
+            fb = runner.last_exec_feedback
+            fb_block = (f"----- previous attempt's execution result -----\n{fb}\n\n"
+                        if fb else "")
+            full = task_preamble + budget_line + fb_block + (context or "")
             out = proposer(full)
             # expose the LLM I/O for the trace window
             propose.last_trace = getattr(proposer, "last_trace", None)
             return out
         propose.last_trace = None
-
-        direction = "min" if task.metadata.get("is_lower_better") else "max"
-        runner = _LocalExecRunner(workspace, task.data_dir)
 
         hc = HillClimber(propose=propose, runner=runner, direction=direction)
 
