@@ -35,6 +35,39 @@ from arbench.core.registry import register_adapter
 from arbench.llm.backends import configure_aide_env, resolve_backend
 
 
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+_IMAGE_KEYWORDS = ("image", "cactus", "leaf", "leaves", "x-ray", "xray", "histo",
+                   "dog", "cat", "digit", "mnist", "cifar", "satellite", "aerial",
+                   "photo", "picture", "pixel", "convolutional")
+
+
+def _looks_like_image_task(task: Task) -> bool:
+    """Heuristic: is this an image task (so the proposer should train a CNN)?
+
+    Two cheap signals, OR'd: (1) the task id / goal / eval text mentions images;
+    (2) the data dir actually contains image files. Either is enough — the cost of
+    a false positive (nudging toward a CNN on non-image data) is low because the
+    proposer still sees the real data, while a false negative produced a constant
+    chance-level submission on aerial-cactus.
+    """
+    text = " ".join(
+        str(x or "") for x in (task.task_id, getattr(task, "goal", ""),
+                                getattr(task, "eval", ""))
+    ).lower()
+    if any(k in text for k in _IMAGE_KEYWORDS):
+        return True
+    try:
+        data_dir = Path(task.data_dir)
+        for i, p in enumerate(data_dir.rglob("*")):
+            if i > 2000:  # bound the walk on large datasets
+                break
+            if p.suffix.lower() in _IMAGE_EXTS:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 # System prompt: turn the proposer into an MLE-bench solution writer. It must emit
 # a self-contained script and the SCORE= contract; the runner enforces nothing
 # else, so the contract lives here.
@@ -337,11 +370,30 @@ class ContinualAdapter(AutoResearchAdapter):
             if lower_better else
             "OPTIMIZATION DIRECTION: HIGHER SCORE is better (the loop maximises)."
         ) + " Print SCORE= as the RAW metric in this direction — do not invert it.\n"
+        # Modality hint. The system prompt steers toward simple/GBM/linear models,
+        # which is right for tabular but makes the proposer punt on IMAGE tasks
+        # (it wrote a constant 0.5 submission for aerial-cactus rather than a CNN).
+        # When the data looks like images, override that steer with an explicit
+        # "train a small CNN on the GPU" instruction.
+        modality_line = ""
+        if _looks_like_image_task(task):
+            modality_line = (
+                "MODALITY: this is an IMAGE classification task. The 'prefer a simple "
+                "GBM/linear model' guidance does NOT apply — a constant/trivial "
+                "submission scores at chance. Train a small convolutional network "
+                "(e.g. a compact CNN or a lightweight pretrained backbone like "
+                "resnet18) on the GPU with torch/torchvision: read the image files, "
+                "use a DataLoader, train for a few epochs with early data, and write "
+                "calibrated probabilities to submission.csv. Keep it within the "
+                "runtime budget (small input size, few epochs) but it MUST actually "
+                "train on the images.\n"
+            )
         task_preamble = (
             f"TASK: {task.task_id}\n"
             f"DATA DIRECTORY (read inputs from here): {task.data_dir}\n"
             f"EVALUATION: {task.eval}\n"
-            f"{direction_line}\n"
+            f"{direction_line}"
+            f"{modality_line}\n"
             f"{task.goal}\n\n"
             "----- hill-climbing context (incumbent + recent attempts) -----\n"
         )
@@ -411,3 +463,4 @@ def _latest_submission(iters_dir: Path) -> Optional[Path]:
 
 
 register_adapter("continual", ContinualAdapter)
+
