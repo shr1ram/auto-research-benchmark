@@ -387,6 +387,11 @@ class ContinualAdapter(AutoResearchAdapter):
                 "calibrated probabilities to submission.csv. Keep it within the "
                 "runtime budget (small input size, few epochs) but it MUST actually "
                 "train on the images.\n"
+                "DATA NOTE: image files are often shipped as ZIP archives (e.g. "
+                "train.zip / test.zip) in the data directory and are NOT pre-extracted. "
+                "Check for .zip files and extract them (zipfile) into a writable temp "
+                "dir under the CURRENT working directory before reading images; do not "
+                "assume loose .jpg/.png files already exist on disk.\n"
             )
         task_preamble = (
             f"TASK: {task.task_id}\n"
