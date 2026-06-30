@@ -54,6 +54,13 @@ HARD REQUIREMENTS (a violation scores the attempt as failed):
    competition metric and prints it as the FINAL stdout line, EXACTLY:
        SCORE=<number>
    (line-anchored, e.g. `SCORE=0.7421`). Print nothing after it.
+   CRITICAL — SCORE must be the RAW competition metric in its NATURAL direction, the
+   SAME value a leaderboard would show. Do NOT transform it: never print 1-metric,
+   never negate it, never convert a "higher-is-better" metric into a loss. The loop
+   is told separately whether higher or lower is better (see OPTIMIZATION DIRECTION
+   in the task) and handles that itself. E.g. for ROC AUC print `SCORE=<auc>` (NOT
+   `1-auc`); for RMSE print `SCORE=<rmse>`. Getting this wrong makes the loop optimise
+   the OPPOSITE of the real objective.
 5. Be robust AND FAST: set seeds, guard against missing columns, and keep runtime
    within the RUNTIME BUDGET stated in the task (a script that exceeds it is killed
    and scored as failed). Prefer a strong SIMPLE baseline first (cheap features,
@@ -64,6 +71,65 @@ To improve over the incumbent, change ONE meaningful thing (a research move:
 better features, a different model class, handling imbalance/leakage, tuning,
 ensembling) rather than rewriting blindly.
 """
+
+
+class _MetricExtractor:
+    """Independently extract the run's metric from its output — AIDE-style.
+
+    AIDE does NOT trust a script's self-reported number; a separate feedback LLM
+    call reads the execution output and returns {is_bug, metric, lower_is_better},
+    and a buggy/None metric maps to the worst value. We mirror that here so the
+    baseline (AIDE) and the intervention (CAR) derive their score the SAME way —
+    otherwise a comparison would confound "memory" with "scoring robustness".
+
+    Returns (metric: float|None, lower_is_better: bool|None, is_bug: bool, raw_text).
+    metric is the RAW competition metric in its natural direction; the caller maps
+    None/is_bug to a failed (non-finite) score for the hill-climber.
+    """
+
+    _SYS = (
+        "You are evaluating the stdout/stderr of an ML solution script. From the "
+        "output, extract the model's FINAL cross-validation / held-out score for the "
+        "competition metric. Respond with STRICT JSON only: "
+        '{"is_bug": <bool>, "metric": <number or null>, "lower_is_better": <bool>}. '
+        "is_bug=true if the script errored, produced no usable metric, or the metric "
+        "looks invalid. metric = the RAW metric value as the script reports it (do NOT "
+        "transform it). lower_is_better = whether a LOWER value of THIS metric is better "
+        "(true for losses/error like RMSE/logloss; false for AUC/accuracy/F1). "
+        "If you cannot find a metric, is_bug=true and metric=null."
+    )
+
+    def __init__(self, model: str, base_url: str, api_key: str):
+        self.model, self.base_url, self.api_key = model, base_url, api_key
+        self._client = None
+
+    def _client_(self):
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        return self._client
+
+    def extract(self, eval_desc: str, output: str):
+        import json as _json
+        user = (f"COMPETITION METRIC: {eval_desc}\n\n"
+                f"--- script output (tail) ---\n{output[-3500:]}")
+        try:
+            resp = self._client_().chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": self._SYS},
+                          {"role": "user", "content": user}],
+                temperature=0, timeout=120,
+            )
+            txt = (resp.choices[0].message.content or "").strip()
+            # tolerate ```json fences
+            if "```" in txt:
+                txt = txt.split("```")[1].lstrip("json").strip() if txt.count("```") >= 2 else txt
+            obj = _json.loads(txt)
+            metric = obj.get("metric")
+            metric = float(metric) if isinstance(metric, (int, float)) else None
+            return metric, obj.get("lower_is_better"), bool(obj.get("is_bug", metric is None)), txt
+        except Exception as exc:  # noqa: BLE001 — extractor must never break the run
+            return None, None, True, f"extractor error: {type(exc).__name__}: {exc}"
 
 
 def _extract_code(proposal: str) -> str:
@@ -93,9 +159,14 @@ class _LocalExecRunner:
     iteration produced so the adapter can grade the BEST iteration's submission
     (not merely the last)."""
 
-    def __init__(self, workspace: Path, data_dir: Path, timeout_s: int = 600):
+    def __init__(self, workspace: Path, data_dir: Path, timeout_s: int = 600,
+                 extractor: "Optional[_MetricExtractor]" = None, eval_desc: str = ""):
         self.workspace = Path(workspace)
         self.data_dir = Path(data_dir)
+        # AIDE-style independent metric extraction (preferred over trusting the
+        # script's SCORE= self-report). None => fall back to the SCORE= sentinel.
+        self.extractor = extractor
+        self.eval_desc = eval_desc
         # Per-iteration execution ceiling. Default 10 min: generous enough for an
         # honest CV on a cheap task, tight enough that a runaway/hung script can't
         # burn the whole run. Override with CAR_EXEC_TIMEOUT_S. (AIDE's own cap is
@@ -156,16 +227,39 @@ class _LocalExecRunner:
         except Exception:  # noqa: BLE001 — logging must never break the run
             pass
 
-        # Score from the SCORE= sentinel (no result.json in this local path).
-        score = scoring.resolve_score(str(rundir), output)
         wrote_sub = sub.exists()
+
+        # Score the run. PREFER AIDE-style independent extraction (read the output,
+        # return the raw metric + buggy flag); fall back to the SCORE= sentinel only
+        # if no extractor is configured or it errored. A buggy/None metric => None
+        # (the controller treats a non-finite score as a failed, non-plateauing run).
+        extractor_note = ""
+        if self.extractor is not None:
+            metric, lower_better, is_bug, ex_txt = self.extractor.extract(self.eval_desc, output)
+            extractor_note = f" | extractor: bug={is_bug} metric={metric} lower_better={lower_better}"
+            # Persist the extractor's INDEPENDENT verdict (auditable trail — the
+            # score the loop actually used did not come from the script's self-report).
+            try:
+                import json as _json
+                (rundir / "extractor.json").write_text(_json.dumps(
+                    {"metric": metric, "lower_better": lower_better,
+                     "is_bug": is_bug, "raw": ex_txt}, indent=2))
+            except Exception:  # noqa: BLE001
+                pass
+            if is_bug or metric is None:
+                score = None
+            else:
+                score = metric
+        else:
+            # No extractor: trust the SCORE= sentinel (legacy path).
+            score = scoring.resolve_score(str(rundir), output)
 
         # Build the feedback the NEXT proposal will see, so the loop self-corrects
         # like AIDE does (exec outcome -> model). Surface the failure mode crisply
         # plus a stderr tail; on success, confirm the score + submission.
         if status == "ok" and score is not None and wrote_sub:
             self.last_exec_feedback = (
-                f"Iter {iteration}: ran OK, SCORE={score}, submission.csv written."
+                f"Iter {iteration}: ran OK, metric={score}, submission.csv written.{extractor_note}"
             )
         else:
             why = []
@@ -185,7 +279,7 @@ class _LocalExecRunner:
         self.last_trace = {
             "runner": "car_local_exec", "iteration": iteration,
             "script": str(script), "score": score, "status": status,
-            "wrote_submission": wrote_sub,
+            "wrote_submission": wrote_sub, "extractor": extractor_note.strip(" |"),
             "output": output[-4000:],  # tail, for the trace window
         }
         return score, output
@@ -237,16 +331,30 @@ class ContinualAdapter(AutoResearchAdapter):
         )
 
         # Fold the task into the proposer context so the LLM sees goal + data dir.
+        lower_better = bool(task.metadata.get("is_lower_better"))
+        direction_line = (
+            "OPTIMIZATION DIRECTION: LOWER SCORE is better (the loop minimises)."
+            if lower_better else
+            "OPTIMIZATION DIRECTION: HIGHER SCORE is better (the loop maximises)."
+        ) + " Print SCORE= as the RAW metric in this direction — do not invert it.\n"
         task_preamble = (
             f"TASK: {task.task_id}\n"
             f"DATA DIRECTORY (read inputs from here): {task.data_dir}\n"
-            f"EVALUATION: {task.eval}\n\n"
+            f"EVALUATION: {task.eval}\n"
+            f"{direction_line}\n"
             f"{task.goal}\n\n"
             "----- hill-climbing context (incumbent + recent attempts) -----\n"
         )
 
         direction = "min" if task.metadata.get("is_lower_better") else "max"
-        runner = _LocalExecRunner(workspace, task.data_dir)
+        # AIDE-style independent metric extraction (same backend as the proposer),
+        # unless disabled via CAR_DISABLE_EXTRACTOR=1 (falls back to the SCORE= sentinel).
+        extractor = None
+        if os.environ.get("CAR_DISABLE_EXTRACTOR") != "1":
+            extractor = _MetricExtractor(backend.model, backend.base_url, backend.api_key)
+        runner = _LocalExecRunner(
+            workspace, task.data_dir, extractor=extractor, eval_desc=task.eval,
+        )
 
         # Tell the proposer the runtime ceiling (AIDE does the same) so it self-
         # limits code complexity rather than writing something that times out.
