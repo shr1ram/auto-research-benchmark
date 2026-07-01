@@ -35,6 +35,7 @@ def _load_builtins() -> None:
         ("aide", lambda: __import__("arbench.adapters.aide_adapter", fromlist=["*"])),
         ("continual", lambda: __import__("arbench.adapters.continual_adapter", fromlist=["*"])),
         ("mlebench_lite", lambda: __import__("arbench.benchmarks.mlebench_lite.benchmark", fromlist=["*"])),
+        ("openml_tabular", lambda: __import__("arbench.benchmarks.openml_tabular.benchmark", fromlist=["*"])),
     ):
         try:
             importer()
