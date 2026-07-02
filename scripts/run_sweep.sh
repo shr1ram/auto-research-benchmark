@@ -10,7 +10,7 @@
 # Resumable: re-run with the same <sweep-name> to continue (done jobs are skipped).
 set -euo pipefail
 
-PROJ="${PROJECT_FS:-/cs/student/project_msc/2025/csml/sruppage}"
+PROJ="${PROJECT_FS:-/cs/student/project_msc/2025/csml/sruppage/thesis}"
 ROOT="$PROJ/auto-research-benchmark"
 DEV="$PROJ/memento-research-dev"
 
