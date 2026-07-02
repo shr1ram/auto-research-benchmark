@@ -6,6 +6,11 @@ never knowing which autoresearch system produced them. Data is staged by
 
 Grading reads `answers.csv` (held-out ground truth) and the agent's `submission.csv`,
 computes the task's metric with sklearn, and returns a clean Score — never raises.
+
+FIREWALL: the agent's data_dir is `<task>/prepared/`; the ground truth lives in
+`<task>/private/answers.csv`, a SIBLING of prepared/ that is never handed out and
+never named in Task metadata. load_task refuses to serve a task whose prepared/
+still contains a legacy answers.csv (pre-firewall layout) — re-prep or migrate.
 """
 from __future__ import annotations
 
@@ -37,6 +42,13 @@ class OpenMLTabular(Benchmark):
             raise RuntimeError("OPENML_DATA_DIR not set (point it at the project FS).")
         return self.data_dir / task_id / "prepared"
 
+    def _answers(self, task_id: str) -> Path:
+        """Grader-only ground truth: <task>/private/answers.csv, OUTSIDE the
+        prepared/ dir the agent is handed. Never expose this path to a Task."""
+        if not self.data_dir:
+            raise RuntimeError("OPENML_DATA_DIR not set (point it at the project FS).")
+        return self.data_dir / task_id / "private" / "answers.csv"
+
     def list_tasks(self) -> Iterable[str]:
         seen, ordered = set(), []
         for tid in SMALL_FIRST + [t.task_id for t in ALL_TASKS]:
@@ -55,6 +67,13 @@ class OpenMLTabular(Benchmark):
                 f"task {task_id!r} is not prepared at {prep}.\n"
                 f"Prepare it:  OPENML_DATA_DIR=... python -m "
                 f"arbench.benchmarks.openml_tabular.prepare {task_id}"
+            )
+        if (prep / "answers.csv").exists():
+            raise RuntimeError(
+                f"FIREWALL: {prep / 'answers.csv'} exists — the held-out answers "
+                f"are inside the agent-visible data dir (legacy layout). Move it "
+                f"to {self._answers(task_id)} (or re-run prepare.py) before "
+                f"serving this task."
             )
         meta = json.loads((prep / "meta.json").read_text())
         goal = (prep / "description.md").read_text()
@@ -75,7 +94,6 @@ class OpenMLTabular(Benchmark):
                 "target": meta["target"],
                 "id_col": meta["id_col"],
                 "sample_submission": str(prep / "sample_submission.csv"),
-                "answers_path": str(prep / "answers.csv"),
             },
         )
 
@@ -85,7 +103,7 @@ class OpenMLTabular(Benchmark):
         try:
             import numpy as np
             import pandas as pd
-            ans = pd.read_csv(meta["answers_path"])
+            ans = pd.read_csv(self._answers(task.task_id))
             sub = pd.read_csv(submission_path)
         except Exception as e:
             return Score.invalid(f"could not read submission/answers: {e}", is_higher_better=hb)

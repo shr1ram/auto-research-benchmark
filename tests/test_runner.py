@@ -56,6 +56,16 @@ class CrashAdapter(AutoResearchAdapter):
         raise RuntimeError("boom")
 
 
+class CrashAfterSubmissionAdapter(AutoResearchAdapter):
+    """Produces a good submission, THEN dies (e.g. a transport failure in a late
+    iteration). The submission must still be graded."""
+    name = "crash_late"
+
+    def run(self, task, workspace):
+        task.submission_path(workspace).write_text("42")
+        raise RuntimeError("boom-late")
+
+
 def test_good_run_grades_high(tmp_path):
     r = run_one(GoodAdapter(), FakeBenchmark(), "t1", tmp_path / "good")
     assert r.score.valid and r.score.value == 1.0
@@ -73,6 +83,32 @@ def test_adapter_crash_becomes_invalid_score(tmp_path):
     r = run_one(CrashAdapter(), FakeBenchmark(), "t1", tmp_path / "crash")
     assert not r.score.valid
     assert r.adapter_error is not None and "boom" in r.adapter_error
+
+
+def test_crash_after_submission_is_still_graded(tmp_path):
+    r = run_one(CrashAfterSubmissionAdapter(), FakeBenchmark(), "t1", tmp_path / "late")
+    assert r.adapter_error is not None and "boom-late" in r.adapter_error
+    assert r.score.valid and r.score.value == 1.0  # graded the best it produced
+    assert "note" in r.score.details               # ...with the crash flagged
+
+
+def test_rerun_clears_stale_adapter_outputs(tmp_path):
+    ws = tmp_path / "reused"
+    # Simulate a previous attempt's leftovers: adapter output trees + submission.
+    for d in ("car_iters/iter_000", "car_best", "aide_run/logs/n0"):
+        (ws / d).mkdir(parents=True)
+        (ws / d / "submission.csv").write_text("42")
+    (ws / "submission.csv").write_text("42")
+    (ws / "llm_calls.jsonl").write_text('{"model": "stale"}\n')
+
+    r = run_one(EmptyAdapter(), FakeBenchmark(), "t1", ws)
+    # The failed re-run must NOT be graded on the previous attempt's files...
+    assert not r.score.valid
+    # ...because the stale trees were cleared before the adapter ran.
+    assert not (ws / "car_iters").exists()
+    assert not (ws / "car_best").exists()
+    assert not (ws / "aide_run").exists()
+    assert not (ws / "submission.csv").exists()
 
 
 def test_result_serialises(tmp_path):

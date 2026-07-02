@@ -19,19 +19,30 @@ the proxy-vs-held-out gap (reward-hacking signal, RQ [E2]) falls out for free.
 Like the AIDE adapter, this uses only car's public surface (HillClimber +
 proposers + scoring) and the filesystem, so internal changes don't break it as
 long as a candidate still leaves a submission.csv + prints SCORE=.
+
+SECURITY NOTE — LLM-written solution scripts run UNSANDBOXED as the login user
+(full containerization is out of scope for this harness). What we do mitigate:
+each script runs with cwd inside its own iteration dir and a cleaned environment
+(SSH agent / API keys / tokens stripped — see _clean_child_env), and the held-out
+answers live outside the data dir the script is pointed at. Residual risk: the
+script can still read anything the login user can read on the shared FS and open
+network connections; treat solution code as untrusted-but-observed, not confined.
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
 from arbench.core.adapter import AutoResearchAdapter
 from arbench.core.task import Task
 from arbench.core.registry import register_adapter
+from arbench.core.trace import record_llm_call
 from arbench.llm.backends import configure_aide_env, resolve_backend
 
 
@@ -177,15 +188,19 @@ class _MetricExtractor:
             (a legitimate verdict; the controller treats it as a failed run);
           - the extractor CALL ITSELF failed (gateway 504 / connection death /
             timeout) -> RAISE. A transport failure is NOT the solution's fault and
-            must not be silently laundered into "the solution is buggy". AIDE raises
-            here too; the runner catches it into a clean adapter_error.
+            must not be silently laundered into "the solution is buggy".
+            _LocalExecRunner.run catches the raise and fails that ITERATION
+            (loud, recorded) — never the whole run, so the best submission from
+            earlier iterations still gets graded.
         """
         import json as _json
         user = (f"COMPETITION METRIC: {eval_desc}\n\n"
                 f"--- script output (tail) ---\n{output[-3500:]}")
         # Forced tool-choice: the model must call submit_review with structured
         # args. This is short (no long codegen), so the alibaba-ga idle-504 risk is
-        # low; if a transport error DOES occur it propagates (loud), by design.
+        # low; if a transport error DOES occur it propagates (loud), by design —
+        # the runner catches it and fails the ITERATION, not the run.
+        t0 = time.monotonic()
         resp = self._client_().chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": self._SYS},
@@ -195,6 +210,18 @@ class _MetricExtractor:
             tool_choice={"type": "function", "function": {"name": "submit_review"}},
         )
         msg = resp.choices[0].message
+        # Telemetry: the extractor is a real LLM call this arm pays for — record
+        # it like AIDE's feedback calls so run.json/cost aren't one-sided.
+        usage = getattr(resp, "usage", None)
+        record_llm_call(
+            model=self.model, role="feedback",
+            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            latency_s=time.monotonic() - t0,
+            system=self._SYS, user=user,
+            response=(msg.content or "") or str(getattr(msg, "tool_calls", "")),
+            extra={"source": "car_metric_extractor"},
+        )
         tcs = getattr(msg, "tool_calls", None)
         if not tcs:
             # Model answered but didn't call the tool -> no usable metric (genuine
@@ -207,6 +234,30 @@ class _MetricExtractor:
         metric = args.get("metric")
         metric = float(metric) if isinstance(metric, (int, float)) else None
         return metric, args.get("lower_is_better"), bool(args.get("is_bug", metric is None)), _json.dumps(args)
+
+
+# Exact env var names that carry live credentials/handles a solution script has
+# no business inheriting; plus a suffix pattern for the API-key/token family.
+_ENV_DENY_EXACT = {
+    "SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY",
+    "ARBENCH_LLM_TRACE",  # the child must not append to the run's LLM trace
+}
+_ENV_DENY_SUFFIX = re.compile(r"(_API_KEY|_APIKEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIALS)$")
+
+
+def _clean_child_env(data_dir: Path) -> dict[str, str]:
+    """Environment for the LLM-written solution subprocess: the parent env minus
+    credentials-bearing variables. Deny-list (not allow-list) on purpose — torch/
+    CUDA/OpenML/PATH/HOME and friends must keep working, and the box env is the
+    only reliable source of those. Full sandboxing is out of scope (see module
+    docstring)."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in _ENV_DENY_EXACT and not _ENV_DENY_SUFFIX.search(k)
+    }
+    env["MLEBENCH_DATA_DIR"] = str(data_dir)
+    env["DATA_DIR"] = str(data_dir)  # also expose the common name
+    return env
 
 
 def _extract_code(proposal: str) -> str:
@@ -273,9 +324,10 @@ class _LocalExecRunner:
         if sub.exists():
             sub.unlink()
 
-        env = dict(os.environ)
-        env["MLEBENCH_DATA_DIR"] = str(self.data_dir)
-        env["DATA_DIR"] = str(self.data_dir)  # also expose the common name
+        # Cleaned env: no SSH agent / API keys / tokens for untrusted solution
+        # code (see _clean_child_env). cwd is the iteration dir inside the
+        # workspace, so relative writes land there.
+        env = _clean_child_env(self.data_dir)
 
         status = "ok"
         stderr_text = ""
@@ -311,9 +363,23 @@ class _LocalExecRunner:
         # if no extractor is configured or it errored. A buggy/None metric => None
         # (the controller treats a non-finite score as a failed, non-plateauing run).
         extractor_note = ""
+        extractor_failed = False
         if self.extractor is not None:
-            metric, lower_better, is_bug, ex_txt = self.extractor.extract(self.eval_desc, output)
-            extractor_note = f" | extractor: bug={is_bug} metric={metric} lower_better={lower_better}"
+            try:
+                metric, lower_better, is_bug, ex_txt = self.extractor.extract(self.eval_desc, output)
+            except Exception as exc:  # transport/gateway death, NOT the solution's fault
+                # Fail THIS ITERATION only (loud), never the whole run — earlier
+                # iterations' best submission must still get graded at the end.
+                extractor_failed = True
+                metric, lower_better, is_bug = None, None, False
+                ex_txt = f"EXTRACTOR TRANSPORT FAILURE: {type(exc).__name__}: {exc}"
+                status = f"extractor_error({type(exc).__name__})" if status == "ok" else status
+                print(f"[continual] iter {iteration}: metric-extractor call failed "
+                      f"({type(exc).__name__}: {exc}) — iteration scored as failed, "
+                      f"run continues", file=sys.stderr, flush=True)
+            extractor_note = (f" | extractor: bug={is_bug} metric={metric} "
+                              f"lower_better={lower_better}"
+                              + (" TRANSPORT-FAILED" if extractor_failed else ""))
             # Persist the extractor's INDEPENDENT verdict (auditable trail — the
             # score the loop actually used did not come from the script's self-report).
             try:
@@ -343,7 +409,8 @@ class _LocalExecRunner:
             if status != "ok":
                 why.append(f"execution {status}")
             if score is None:
-                why.append("no valid SCORE= line printed")
+                why.append("metric-extractor call failed (infrastructure, not the code)"
+                           if extractor_failed else "no valid SCORE= line printed")
             if not wrote_sub:
                 why.append("no submission.csv written")
             tail = (stderr_text or output)[-800:].strip()
@@ -472,33 +539,51 @@ class ContinualAdapter(AutoResearchAdapter):
             fb_block = (f"----- previous attempt's execution result -----\n{fb}\n\n"
                         if fb else "")
             full = task_preamble + budget_line + fb_block + (context or "")
+            t0 = time.monotonic()
             out = proposer(full)
+            latency = time.monotonic() - t0
             # expose the LLM I/O for the trace window
-            propose.last_trace = getattr(proposer, "last_trace", None)
+            lt = getattr(proposer, "last_trace", None) or {}
+            propose.last_trace = lt or None
+            # Telemetry: record the proposer call into the run's LLM trace, so
+            # the continual arm's run.json carries n_llm_calls/tokens/cost like
+            # the AIDE arm does (token counts come from the proposer's streamed
+            # usage chunk; 0 if the CAR version doesn't surface usage yet).
+            record_llm_call(
+                model=backend.model, role="code",
+                prompt_tokens=lt.get("prompt_tokens") or 0,
+                completion_tokens=lt.get("completion_tokens") or 0,
+                latency_s=lt.get("latency_s") or latency,
+                system=_CAR_MLE_SYSTEM, user=full, response=out,
+                extra={"source": "car_proposer"},
+            )
             return out
         propose.last_trace = None
 
         hc = HillClimber(propose=propose, runner=runner, direction=direction)
 
-        # Stream so we can snapshot the best submission as the incumbent changes.
-        # NOTE: car's scored event uses the key "improved" (a separate "accepted"
-        # event also fires, but the scored event is where iteration+improved meet).
-        best_iter = None
-        for ev in hc.stream(max_iter=self.steps, patience=self.steps):
-            if ev.get("type") == "scored":
-                improved = bool(ev.get("improved"))
-                runner.snapshot_if_best(ev.get("iteration"), improved)
-                if improved:
-                    best_iter = ev.get("iteration")
-
-        # Place the best submission where the grader expects it. Prefer the
-        # best-snapshot; else fall back to the most recent iteration's submission.
         dest = task.submission_path(workspace)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        best_sub = runner.best_dir / "submission.csv"
-        chosen = best_sub if best_sub.is_file() else _latest_submission(runner.iters_dir)
-        if chosen is not None and chosen.is_file():
-            shutil.copyfile(chosen, dest)
+        try:
+            # Stream so we can snapshot the best submission as the incumbent changes.
+            # NOTE: car's scored event uses the key "improved" (a separate "accepted"
+            # event also fires, but the scored event is where iteration+improved meet).
+            best_iter = None
+            for ev in hc.stream(max_iter=self.steps, patience=self.steps):
+                if ev.get("type") == "scored":
+                    improved = bool(ev.get("improved"))
+                    runner.snapshot_if_best(ev.get("iteration"), improved)
+                    if improved:
+                        best_iter = ev.get("iteration")
+        finally:
+            # ALWAYS place the best submission where the grader expects it — even
+            # if the loop died mid-run, the best iteration so far is gradeable
+            # (the runner grades dest despite an adapter error). Prefer the
+            # best-snapshot; else fall back to the most recent iteration's file.
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            best_sub = runner.best_dir / "submission.csv"
+            chosen = best_sub if best_sub.is_file() else _latest_submission(runner.iters_dir)
+            if chosen is not None and chosen.is_file():
+                shutil.copyfile(chosen, dest)
         # If nothing was produced, return dest anyway (missing file -> grader marks
         # it invalid, which is the correct "the system failed to solve it" outcome).
         return dest

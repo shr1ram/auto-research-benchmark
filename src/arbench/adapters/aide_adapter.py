@@ -45,6 +45,23 @@ class AIDEAdapter(AutoResearchAdapter):
         self.repo_dir = os.environ.get("AIDE_REPO")
 
     def prepare(self, task: Task, workspace: Path) -> None:
+        # --model HONESTY: AIDE loads its models from the fork's config.yaml
+        # (use_cli_args=False under the arbench CLI — our argv-dotlist injection
+        # in run() is best-effort only and does NOT reliably apply). If a model
+        # override was requested but the fork pins a different model, running
+        # anyway would record a model into run.json that was never used. Fail
+        # loud at run start instead.
+        if self.model:
+            pinned = _aide_pinned_code_model()
+            if pinned is not None and pinned != self.model:
+                raise RuntimeError(
+                    f"--model {self.model!r} requested for the aide adapter, but the "
+                    f"AIDE fork pins agent.code.model={pinned!r} in aide/utils/"
+                    f"config.yaml and the override cannot be applied under the "
+                    f"arbench CLI. Either edit the fork's config.yaml to the model "
+                    f"you want, or drop --model (runs would otherwise record a "
+                    f"model that was never used)."
+                )
         # Point AIDE's OpenAI-compatible client at the chosen backend (LiteLLM/
         # Kimi by default). Mutates os.environ so the AIDE import picks it up.
         b = configure_aide_env(self.backend, model=self.model)
@@ -105,6 +122,21 @@ class AIDEAdapter(AutoResearchAdapter):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(found, dest)
         return dest
+
+
+def _aide_pinned_code_model() -> str | None:
+    """The model the AIDE fork will ACTUALLY use (agent.code.model in the fork's
+    aide/utils/config.yaml). None if AIDE/its config can't be read — in that case
+    the run will fail on import anyway, so we don't block on the check."""
+    try:
+        import aide
+        cfg_path = Path(aide.__file__).resolve().parent / "utils" / "config.yaml"
+        from omegaconf import OmegaConf
+        cfg = OmegaConf.load(cfg_path)
+        model = OmegaConf.select(cfg, "agent.code.model")
+        return str(model) if model is not None else None
+    except Exception:
+        return None
 
 
 @contextmanager

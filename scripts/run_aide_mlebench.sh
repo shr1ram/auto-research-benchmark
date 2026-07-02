@@ -11,6 +11,7 @@ COMP="${1:-random-acts-of-pizza}"
 STEPS="${2:-10}"
 PROJ="${PROJECT_FS:-/cs/student/project_msc/2025/csml/sruppage}"
 export MLEBENCH_DATA_DIR="${MLEBENCH_DATA_DIR:-$PROJ/mlebench-data}"
+export MLEBENCH_PRIVATE_DATA_DIR="${MLEBENCH_PRIVATE_DATA_DIR:-$PROJ/mlebench-data-private}"  # grader-only split
 export XDG_CACHE_HOME="$PROJ/.cache"
 
 WS="$PROJ/auto-research-benchmark/runs/${COMP}-$(date +%Y%m%d-%H%M%S)"

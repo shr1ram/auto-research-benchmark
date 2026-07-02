@@ -21,6 +21,7 @@ MAXBOXES="${4:-4}"
 STEPS="${5:-8}"
 
 export MLEBENCH_DATA_DIR="$PROJ/mlebench-data"
+export MLEBENCH_PRIVATE_DATA_DIR="$PROJ/mlebench-data-private"  # grader-only split, firewalled from agents
 export XDG_CACHE_HOME="$PROJ/.cache"
 export KAGGLE_CONFIG_DIR="$HOME/.kaggle"
 KEY="$(grep -E '^CUSTOM_API_KEY=' "$DEV/env-profiles/llm.api.env" | cut -d= -f2-)"
@@ -30,7 +31,9 @@ ENVX="export CUSTOM_API_KEY=$KEY; \
 export OPENAI_BASE_URL=https://litellm.yangtzeailab.com/v1; export OPENAI_API_KEY=$KEY; \
 export OPENAI_REQUEST_TIMEOUT=150 OPENAI_MAX_RETRIES=4; \
 export ARBENCH_LLM_BACKEND=litellm ARBENCH_LLM_MODEL=Kimi-K2.6; \
-export MLEBENCH_DATA_DIR=$PROJ/mlebench-data; export XDG_CACHE_HOME=$PROJ/.cache; \
+export MLEBENCH_DATA_DIR=$PROJ/mlebench-data; \
+export MLEBENCH_PRIVATE_DATA_DIR=$PROJ/mlebench-data-private; \
+export XDG_CACHE_HOME=$PROJ/.cache; \
 export KAGGLE_CONFIG_DIR=\$HOME/.kaggle; export AIDE_REPO=$ROOT/aideml;"
 
 SWEEP="$ROOT/runs/$NAME"

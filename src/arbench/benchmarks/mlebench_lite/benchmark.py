@@ -7,6 +7,22 @@ the adapter-facing Task view and a clean Score.
 `mlebench` and a prepared competition must be present on the run box; if they are
 not, load_task/grade raise a clear, actionable error instead of failing deep in
 an import.
+
+FIREWALL — the private split lives under a SEPARATE root. mlebench's stock layout
+puts `prepared/private/` (held-out answers) one `../private` away from the
+`prepared/public/` dir handed to the agent, and agent-written code runs
+unsandboxed. We therefore keep two roots:
+
+  * public root  (MLEBENCH_DATA_DIR):          <root>/<task>/prepared/public
+  * private root (MLEBENCH_PRIVATE_DATA_DIR):  <root>-private/<task>/prepared/private
+
+load_task resolves paths against the public root; grade() builds its Competition
+against the private root (mlebench's Registry derives every answers path from its
+data_dir, so pointing a second Registry at the private root is all it takes).
+If MLEBENCH_PRIVATE_DATA_DIR is unset we fall back to `<data_dir>-private` when
+that directory exists, else to the legacy single-root layout. In firewalled mode
+load_task refuses to serve a task whose PUBLIC tree still contains a private/
+dir (unmigrated data = live leak).
 """
 from __future__ import annotations
 
@@ -37,16 +53,37 @@ def _require_mlebench():
 class MLEBenchLite(Benchmark):
     name = "mlebench_lite"
 
-    def __init__(self, data_dir: str | None = None):
+    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None):
         # Where prepared competition data lives. Default to MLEBENCH_DATA_DIR env
         # (we point this at the project FS on the box, never NFS home).
         self.data_dir = Path(
             data_dir or os.environ.get("MLEBENCH_DATA_DIR", "")
         ) if (data_dir or os.environ.get("MLEBENCH_DATA_DIR")) else None
+        # Grader-only root holding each task's prepared/private split (see module
+        # docstring). Resolution: explicit arg > env > `<data_dir>-private` if it
+        # exists > legacy single root (= data_dir).
+        priv = private_data_dir or os.environ.get("MLEBENCH_PRIVATE_DATA_DIR", "")
+        if priv:
+            self.private_data_dir = Path(priv)
+        elif self.data_dir is not None and Path(f"{self.data_dir}-private").is_dir():
+            self.private_data_dir = Path(f"{self.data_dir}-private")
+        else:
+            self.private_data_dir = self.data_dir  # legacy: everything in one root
 
     def _registry(self):
         registry, _ = _require_mlebench()
         return registry.set_data_dir(self.data_dir) if self.data_dir else registry
+
+    def _grading_registry(self):
+        """A second mlebench Registry rooted at the private data dir, so
+        Competition.answers / private_dir resolve OUTSIDE the agent-reachable
+        tree. Falls back to the public registry in legacy single-root mode."""
+        registry, _ = _require_mlebench()
+        return registry.set_data_dir(self.private_data_dir) if self.private_data_dir else registry
+
+    def _firewalled(self) -> bool:
+        return (self.private_data_dir is not None
+                and self.private_data_dir != self.data_dir)
 
     def list_tasks(self) -> Iterable[str]:
         # The Lite split, smallest-first so the cheap smoke tasks lead.
@@ -66,6 +103,14 @@ class MLEBenchLite(Benchmark):
                 f"Prepare it first:  mlebench prepare -c {task_id}\n"
                 "(requires Kaggle API creds in ~/.kaggle/kaggle.json and "
                 "accepting the competition rules on kaggle.com)."
+            )
+        if self._firewalled() and Path(comp.private_dir).exists():
+            raise RuntimeError(
+                f"FIREWALL: {comp.private_dir} still exists inside the public data "
+                f"root — the held-out split is one '../private' away from the "
+                f"agent's data dir. Migrate it to "
+                f"{self.private_data_dir / task_id / 'prepared' / 'private'} "
+                f"before serving this task."
             )
         goal = (
             f"{comp.description}\n\n"
@@ -90,7 +135,10 @@ class MLEBenchLite(Benchmark):
 
     def grade(self, task: Task, submission_path: Path) -> Score:
         registry, grade_csv = _require_mlebench()
-        reg = self._registry()
+        # Grade against the PRIVATE root: mlebench derives answers/private_dir
+        # from its Registry's data_dir, and grade_csv only touches the private
+        # side (is_dataset_prepared(grading_only=True) skips public checks).
+        reg = self._grading_registry()
         try:
             comp = reg.get_competition(task.task_id)
             report = grade_csv(Path(submission_path), comp)

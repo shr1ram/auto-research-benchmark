@@ -3,13 +3,17 @@
 For each task spec, download the OpenML dataset (by data_id, via the public REST/
 minio parquet endpoint — no `openml` pip dep), then write a fixed, seeded split:
 
-    $OPENML_DATA_DIR/<task_id>/prepared/
+    $OPENML_DATA_DIR/<task_id>/prepared/         # <- handed to the agent as data_dir
         train.csv        # features + target  (the agent trains on this; may self-split for CV)
         test.csv         # features only       (the agent predicts these -> submission.csv)
-        answers.csv      # id,target           (held-out ground truth; grader-only, NEVER given to agent)
         sample_submission.csv
         description.md    # goal text for the Task
         meta.json         # {metric, higher_better, kind, target, id_col, dataset_id, n_train, n_test}
+    $OPENML_DATA_DIR/<task_id>/private/          # <- grader-only, NEVER inside data_dir
+        answers.csv      # id,target           (held-out ground truth)
+
+FIREWALL: answers.csv must never live under prepared/ — that directory is handed
+to the agent verbatim as its data dir, so anything in it is agent-readable.
 
 The split is 80/20 seeded (proxy=train, held-out=test/answers) — the proxy-vs-held-out
 structure [E2] needs. Deterministic given the seed so re-prep reproduces the same split.
@@ -71,6 +75,8 @@ def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str]:
 def prepare_one(spec, data_root: Path) -> dict:
     out = data_root / spec.task_id / "prepared"
     out.mkdir(parents=True, exist_ok=True)
+    private = data_root / spec.task_id / "private"   # grader-only, outside data_dir
+    private.mkdir(parents=True, exist_ok=True)
     df, default_target = _download_openml_csv(spec.dataset_id)
     # Prefer OpenML's authoritative default_target_attribute; fall back to the
     # spec's hand-written target only if the metadata didn't name one.
@@ -101,8 +107,13 @@ def prepare_one(spec, data_root: Path) -> dict:
 
     train.to_csv(out / "train.csv", index=False)
     test_features.to_csv(out / "test.csv", index=False)
-    answers.to_csv(out / "answers.csv", index=False)
+    answers.to_csv(private / "answers.csv", index=False)
     sample.to_csv(out / "sample_submission.csv", index=False)
+    # Drop any legacy answers file written into prepared/ by an older prepare.py
+    # (pre-firewall layout) so a re-prep also closes the leak.
+    legacy = out / "answers.csv"
+    if legacy.exists():
+        legacy.unlink()
 
     meta = {
         "task_id": spec.task_id, "dataset_id": spec.dataset_id,

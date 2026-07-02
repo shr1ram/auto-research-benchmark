@@ -29,9 +29,41 @@ _ARBENCH_REPO = Path(__file__).resolve().parents[3]
 # env keys worth snapshotting for reconstruction (no secrets)
 _ENV_KEYS = (
     "ARBENCH_LLM_BACKEND", "ARBENCH_LLM_MODEL", "DEFAULT_API_BASE_URL",
-    "OPENAI_BASE_URL", "MLEBENCH_DATA_DIR", "AIDE_STEPS",
+    "OPENAI_BASE_URL", "MLEBENCH_DATA_DIR", "MLEBENCH_PRIVATE_DATA_DIR",
+    "OPENML_DATA_DIR", "AIDE_STEPS",
     "OPENAI_REQUEST_TIMEOUT", "OPENAI_MAX_RETRIES",
 )
+
+# Adapter output trees that must not survive into a re-run of the same workspace:
+# both submission finders (aide/continual) glob the newest submission.csv under
+# these, so a stale tree lets a FAILED re-run be graded on the previous attempt's
+# file.
+_STALE_ADAPTER_DIRS = ("car_iters", "car_best", "aide_run")
+
+
+def _clear_stale_attempt(workspace: Path, submission_path: Path) -> None:
+    """Reset a reused workspace before a fresh attempt: drop the previous
+    attempt's adapter output trees, submission, artifacts and LLM trace, so
+    nothing from a prior run can leak into this run's grading or aggregates."""
+    try:
+        for name in _STALE_ADAPTER_DIRS:
+            d = workspace / name
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        if submission_path.exists():
+            submission_path.unlink()
+        trace_path = workspace / "llm_calls.jsonl"
+        if trace_path.exists():
+            trace_path.unlink()
+        art = workspace / "artifacts"
+        if art.exists():
+            for p in art.glob("*"):
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    p.unlink()
+    except Exception:
+        pass  # best-effort; a clear failure must not sink the run
 
 
 def _collect_artifacts(workspace: Path) -> None:
@@ -73,26 +105,19 @@ def run_one(
     task = benchmark.load_task(task_id)
     submission_path = task.submission_path(workspace)
 
+    # Reset any leftovers from a prior attempt into the SAME workspace (stale
+    # adapter trees / submission / artifacts / llm trace) — else record_llm_call's
+    # append mode double-counts and a failed re-run gets graded on the previous
+    # attempt's submission.
+    _clear_stale_attempt(workspace, submission_path)
+
     # Point the LLM backend's call-trace sink at this run's JSONL (the AIDE fork
     # appends one record per call). NOTE: $ARBENCH_LLM_TRACE is process-global —
     # run_one is one-run-per-process, NOT thread/async safe. The batch scheduler
     # runs each job in its own ssh'd process, so that's fine.
     prev_trace = os.environ.get(LLM_TRACE_ENV)
     if trace:
-        trace_path = workspace / "llm_calls.jsonl"
-        # Truncate any stale trace from a prior (failed/re-run) attempt into the
-        # SAME workspace, else record_llm_call's append mode double-counts
-        # tokens/cost/latency across attempts.
-        try:
-            if trace_path.exists():
-                trace_path.unlink()
-            art = workspace / "artifacts"
-            if art.exists():
-                for p in art.glob("*"):
-                    p.unlink()
-        except Exception:
-            pass
-        os.environ[LLM_TRACE_ENV] = str(trace_path)
+        os.environ[LLM_TRACE_ENV] = str(workspace / "llm_calls.jsonl")
 
     # Resolve the real model name via the backend resolver when the adapter
     # didn't pin one (adapter.model is often None — the model is the backend's
@@ -131,12 +156,21 @@ def run_one(
     meta.finished_at = time.time()
     meta.wall_clock_s = round(duration_s, 3)
 
-    if adapter_error is not None:
-        score = Score.invalid("adapter raised before producing a submission")
-    elif not submission_path.exists():
-        score = Score.invalid(f"no submission at {submission_path}")
+    # Grade whatever submission exists, even when the adapter raised: a crash
+    # AFTER producing a (best-so-far) submission — e.g. a transport failure in
+    # a late iteration — must not throw away the gradeable work. The run is
+    # invalid only if no submission was ever produced; adapter_error stays
+    # recorded either way.
+    if not submission_path.exists():
+        score = Score.invalid(
+            "adapter raised before producing a submission" if adapter_error is not None
+            else f"no submission at {submission_path}")
     else:
         score = benchmark.grade(task, submission_path)
+        if adapter_error is not None:
+            score.details.setdefault(
+                "note", "adapter raised mid-run; graded the best submission it "
+                        "produced before failing (see adapter_error)")
 
     score_dict = {
         "value": score.value, "valid": score.valid,
