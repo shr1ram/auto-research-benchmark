@@ -142,47 +142,71 @@ class _MetricExtractor:
             self._client = OpenAI(base_url=self.base_url, api_key=self.api_key)
         return self._client
 
+    # Force structured output via function-calling, exactly like AIDE's
+    # review_func_spec — the model MUST return these fields as tool-call args, so
+    # it cannot narrate prose that free-text json.loads would choke on. Keeping this
+    # identical to AIDE is the whole point of the extractor: the CAR intervention
+    # and the AIDE baseline must derive their score the same way.
+    _TOOL = {
+        "type": "function",
+        "function": {
+            "name": "submit_review",
+            "description": "Submit a review of the training script's output.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "is_bug": {"type": "boolean",
+                               "description": "true if the execution failed / has a bug, else false."},
+                    "metric": {"type": ["number", "null"],
+                               "description": "the RAW validation metric the script reports "
+                                              "(do NOT transform it); null if none / buggy."},
+                    "lower_is_better": {"type": "boolean",
+                               "description": "true if a LOWER value of THIS metric is better "
+                                              "(RMSE/logloss), false for AUC/accuracy/F1."},
+                },
+                "required": ["is_bug", "metric", "lower_is_better"],
+            },
+        },
+    }
+
     def extract(self, eval_desc: str, output: str):
+        """AIDE-style independent metric extraction via forced function-calling.
+
+        Two failure classes, kept distinct like AIDE:
+          - the LLM ran and judged the solution bad / metric-less -> is_bug=True
+            (a legitimate verdict; the controller treats it as a failed run);
+          - the extractor CALL ITSELF failed (gateway 504 / connection death /
+            timeout) -> RAISE. A transport failure is NOT the solution's fault and
+            must not be silently laundered into "the solution is buggy". AIDE raises
+            here too; the runner catches it into a clean adapter_error.
+        """
         import json as _json
-        import re as _re
-        # FAST PATH: the solution prints a deterministic `SCORE=<raw metric>` line
-        # by contract (see _CAR_MLE_SYSTEM). Parse it directly — no LLM call, so it
-        # is immune to the gateway 504 that a non-streaming extractor call hits, and
-        # it is exact. Only fall back to the LLM extractor if the sentinel is absent.
-        m = _re.findall(r'(?mi)^\s*SCORE\s*=\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*$',
-                        output or "")
-        if m:
-            try:
-                return float(m[-1]), None, False, f"SCORE= sentinel: {m[-1]}"
-            except ValueError:
-                pass
         user = (f"COMPETITION METRIC: {eval_desc}\n\n"
                 f"--- script output (tail) ---\n{output[-3500:]}")
+        # Forced tool-choice: the model must call submit_review with structured
+        # args. This is short (no long codegen), so the alibaba-ga idle-504 risk is
+        # low; if a transport error DOES occur it propagates (loud), by design.
+        resp = self._client_().chat.completions.create(
+            model=self.model,
+            messages=[{"role": "system", "content": self._SYS},
+                      {"role": "user", "content": user}],
+            temperature=0, timeout=120,
+            tools=[self._TOOL],
+            tool_choice={"type": "function", "function": {"name": "submit_review"}},
+        )
+        msg = resp.choices[0].message
+        tcs = getattr(msg, "tool_calls", None)
+        if not tcs:
+            # Model answered but didn't call the tool -> no usable metric (genuine
+            # is_bug, like AIDE's metric=None). NOT a transport failure.
+            return None, None, True, f"no tool call; content={((msg.content or '')[:200])!r}"
         try:
-            # STREAM the extractor call — same gateway-504 fix as the proposer
-            # (a non-streaming create sits idle >180s and the alibaba-ga gateway
-            # kills it, yielding empty text -> JSONDecodeError -> spurious is_bug).
-            stream = self._client_().chat.completions.create(
-                model=self.model,
-                messages=[{"role": "system", "content": self._SYS},
-                          {"role": "user", "content": user}],
-                temperature=0, timeout=120,
-                stream=True, stream_options={"include_usage": True},
-            )
-            parts = []
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                    parts.append(chunk.choices[0].delta.content)
-            txt = ("".join(parts)).strip()
-            # tolerate ```json fences
-            if "```" in txt:
-                txt = txt.split("```")[1].lstrip("json").strip() if txt.count("```") >= 2 else txt
-            obj = _json.loads(txt)
-            metric = obj.get("metric")
-            metric = float(metric) if isinstance(metric, (int, float)) else None
-            return metric, obj.get("lower_is_better"), bool(obj.get("is_bug", metric is None)), txt
-        except Exception as exc:  # noqa: BLE001 — extractor must never break the run
-            return None, None, True, f"extractor error: {type(exc).__name__}: {exc}"
+            args = _json.loads(tcs[0].function.arguments or "{}")
+        except _json.JSONDecodeError:
+            return None, None, True, f"unparseable tool args: {tcs[0].function.arguments[:200]!r}"
+        metric = args.get("metric")
+        metric = float(metric) if isinstance(metric, (int, float)) else None
+        return metric, args.get("lower_is_better"), bool(args.get("is_bug", metric is None)), _json.dumps(args)
 
 
 def _extract_code(proposal: str) -> str:
