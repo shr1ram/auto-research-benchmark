@@ -144,16 +144,36 @@ class _MetricExtractor:
 
     def extract(self, eval_desc: str, output: str):
         import json as _json
+        import re as _re
+        # FAST PATH: the solution prints a deterministic `SCORE=<raw metric>` line
+        # by contract (see _CAR_MLE_SYSTEM). Parse it directly — no LLM call, so it
+        # is immune to the gateway 504 that a non-streaming extractor call hits, and
+        # it is exact. Only fall back to the LLM extractor if the sentinel is absent.
+        m = _re.findall(r'(?mi)^\s*SCORE\s*=\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*$',
+                        output or "")
+        if m:
+            try:
+                return float(m[-1]), None, False, f"SCORE= sentinel: {m[-1]}"
+            except ValueError:
+                pass
         user = (f"COMPETITION METRIC: {eval_desc}\n\n"
                 f"--- script output (tail) ---\n{output[-3500:]}")
         try:
-            resp = self._client_().chat.completions.create(
+            # STREAM the extractor call — same gateway-504 fix as the proposer
+            # (a non-streaming create sits idle >180s and the alibaba-ga gateway
+            # kills it, yielding empty text -> JSONDecodeError -> spurious is_bug).
+            stream = self._client_().chat.completions.create(
                 model=self.model,
                 messages=[{"role": "system", "content": self._SYS},
                           {"role": "user", "content": user}],
                 temperature=0, timeout=120,
+                stream=True, stream_options={"include_usage": True},
             )
-            txt = (resp.choices[0].message.content or "").strip()
+            parts = []
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    parts.append(chunk.choices[0].delta.content)
+            txt = ("".join(parts)).strip()
             # tolerate ```json fences
             if "```" in txt:
                 txt = txt.split("```")[1].lstrip("json").strip() if txt.count("```") >= 2 else txt
