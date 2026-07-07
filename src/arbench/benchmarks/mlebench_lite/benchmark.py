@@ -33,7 +33,6 @@ from typing import Iterable
 from arbench.core.benchmark import Benchmark
 from arbench.core.task import Task
 from arbench.core.result import Score
-from arbench.core.registry import register_benchmark
 from arbench.benchmarks.mlebench_lite.tasks import LITE_COMPETITIONS, SMALL_FIRST
 
 
@@ -177,5 +176,3 @@ class MLEBenchLite(Benchmark):
             },
         )
 
-
-register_benchmark("mlebench_lite", MLEBenchLite)

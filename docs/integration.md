@@ -1,27 +1,31 @@
 # Integration notes
 
-## How a new autoresearch system plugs in
+## How a consuming system uses the library
 
-Implement `AutoResearchAdapter.run(task, workspace) -> submission_path`:
+```python
+import arbench
+bench = arbench.get_benchmark("openml_tabular")        # or mlebench_lite
+for task_id in bench.list_tasks(): ...
+task = bench.load_task(task_id)     # goal/eval prose + public data_dir only
+# ... the system does its work, writes task.submission_path(workspace) ...
+score = bench.grade(task, submission_path)
+```
 
-- read `task.goal`, `task.eval`, `task.data_dir`;
-- do whatever the system does;
-- write the submission to `task.submission_path(workspace)` and return it.
-
-Register it with `register_adapter("name", Factory)`. That's the whole contract —
-the runner and every benchmark already work with it. See `adapters/continual_adapter.py`
-for a full example and `adapters/continual_adapter.py` for the stub shape.
+`Task.render_goal(visible_data_dir)` rewrites host data paths for runs that see
+the data elsewhere (e.g. bind-mounted inside a Singularity container).
 
 ## How a new benchmark plugs in
 
 Implement `Benchmark`:
 
 - `list_tasks()` → ids;
-- `load_task(id)` → a `Task` (prepare/locate data, write the goal/eval);
+- `load_task(id)` → a `Task` (prepare/locate data, write the goal/eval; never
+  name the private answers);
 - `grade(task, submission_path)` → a `Score` (return `Score.invalid(...)`, never
   raise, on missing/malformed submissions).
 
-Register with `register_benchmark("name", Factory)`.
+Add its lazy-import branch to `arbench.get_benchmark` and its public/private
+roots under `data/<name>/{public,private}`.
 
 ## MLE-Bench Lite specifics
 
@@ -33,18 +37,12 @@ Register with `register_benchmark("name", Factory)`.
   `~/.kaggle/kaggle.json` plus accepting each competition's rules on kaggle.com.
   This is a manual, per-account step and the main blocker to a fully automated run.
 - **No docker required.** mle-bench ships a docker-based reference agent harness;
-  we don't use it — we run the mle-bench *library* (prepare/grade) and the adapter
-  natively, which is enough for the entry/exit contracts.
-
-## LLM routing
-
-Clients route to an OpenAI-compatible endpoint when `OPENAI_BASE_URL` is set and the
-model name has no `gpt-`/`claude-`/`gemini-` prefix. `Kimi-K2.6` qualifies, so
-`configure_llm_env("litellm")` (sets `OPENAI_BASE_URL` + `OPENAI_API_KEY`) is all
-the client needs. Backends: `litellm` (Kimi, default), `claude_p`, `local` (Ollama).
+  we don't use it — we run the mle-bench *library* (prepare/grade) natively,
+  which is enough for the entry/exit contracts.
 
 ## UCL box conventions
 
 - Run on a GPU box (chosen: an idle lab-gpu box); keep **all** data/artifacts on
   the project FS `/cs/student/project_msc/.../sruppage` — NFS home is full.
-- Set `MLEBENCH_DATA_DIR` and `XDG_CACHE_HOME` onto the project FS before prepare.
+- Set `MLEBENCH_DATA_DIR` / `OPENML_DATA_DIR` (the PUBLIC roots under
+  `data/`) and `XDG_CACHE_HOME` onto the project FS before prepare.

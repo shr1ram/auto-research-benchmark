@@ -1,8 +1,8 @@
 """The Task: the unit of work an autoresearch system is asked to solve.
 
 A Task is deliberately benchmark-agnostic. MLE-Bench produces Tasks; so could
-SWE-bench, a custom Kaggle-style problem, or a toy regression. The adapter only
-ever sees this — never the benchmark internals.
+SWE-bench, a custom Kaggle-style problem, or a toy regression. The consuming
+system only ever sees this — never the benchmark internals.
 """
 from __future__ import annotations
 
@@ -52,10 +52,10 @@ class Task:
 
         `goal` references the data by its HOST path (self.data_dir). When the
         run executes somewhere that path does not exist — e.g. inside a
-        Singularity container with the data bind-mounted at /data — the adapter
+        Singularity container with the data bind-mounted at /data — the caller
         must hand the agent a goal whose paths match its actual view. This
         rewrites every occurrence of the data_dir prefix, which also covers
-        paths UNDER it (e.g. the sample-submission line). Adapters that pass
+        paths UNDER it (e.g. the sample-submission line). Callers that pass
         metadata paths (sample_submission etc.) to the agent must translate
         those the same way.
         """

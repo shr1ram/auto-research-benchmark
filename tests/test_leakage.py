@@ -35,11 +35,13 @@ def test_task_view_contains_no_answers(tmp_path):
     pub, priv = _toy_openml_tree(tmp_path)
     b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv))
     t = b.load_task("MagicTelescope")
-    assert "private" not in Path(t.data_dir).parts
+    # check against the actual private ROOT, not the substring "private" —
+    # macOS tmp dirs live under /private/var and false-trip a substring check
+    assert priv not in Path(t.data_dir).parents
     assert not list(Path(t.data_dir).rglob("answers.csv"))
-    assert "/private" not in t.goal and "answers" not in t.goal
+    assert str(priv) not in t.goal and "answers" not in t.goal
     for v in t.metadata.values():
-        assert "/private" not in str(v)
+        assert str(priv) not in str(v)
 
 
 def test_grader_reads_private_tree(tmp_path):
