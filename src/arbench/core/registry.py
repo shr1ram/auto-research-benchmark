@@ -1,6 +1,6 @@
 """Name -> factory lookup for adapters and benchmarks, so the CLI can wire
-`--adapter aide --benchmark mlebench_lite` without importing everything eagerly
-(MLE-bench / AIDE pull heavy deps only present on the run box).
+`--adapter continual --benchmark mlebench_lite` without importing everything eagerly
+(MLE-bench pulls heavy deps only present on the run box).
 """
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ def _load_builtins() -> None:
     any OTHER error (SyntaxError, a bug in the module) propagate — and record the
     ImportError messages so they're visible rather than silently lost."""
     for label, importer in (
-        ("aide", lambda: __import__("arbench.adapters.aide_adapter", fromlist=["*"])),
         ("continual", lambda: __import__("arbench.adapters.continual_adapter", fromlist=["*"])),
         ("mlebench_lite", lambda: __import__("arbench.benchmarks.mlebench_lite.benchmark", fromlist=["*"])),
         ("openml_tabular", lambda: __import__("arbench.benchmarks.openml_tabular.benchmark", fromlist=["*"])),

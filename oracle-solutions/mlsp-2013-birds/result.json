@@ -1,0 +1,16 @@
+{
+  "task": "mlsp-2013-birds",
+  "ran": true,
+  "exit_code": 0,
+  "wall_clock_s": 29,
+  "submission_written": true,
+  "peak_gpu_mib": 21433,
+  "max_gpu_util": 100,
+  "score": 0.89942,
+  "valid": true,
+  "median": 0.86572,
+  "gold": 0.93527,
+  "above_median": true,
+  "any_medal": true,
+  "grade_error": null
+}

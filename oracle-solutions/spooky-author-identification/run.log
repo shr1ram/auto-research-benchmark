@@ -1,0 +1,18 @@
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1256: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. Use OneVsRestClassifier(LogisticRegression(..)) instead. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1256: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. Use OneVsRestClassifier(LogisticRegression(..)) instead. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1256: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. Use OneVsRestClassifier(LogisticRegression(..)) instead. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1256: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. Use OneVsRestClassifier(LogisticRegression(..)) instead. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1256: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. Use OneVsRestClassifier(LogisticRegression(..)) instead. Leave it to its default value to avoid this warning.
+  warnings.warn(
+CV log-loss: 0.50536
+Wrote submission.csv (1958, 4)
+        id       EAP       HPL       MWS
+0  id27251  0.091388  0.810608  0.098004
+1  id09612  0.289461  0.238701  0.471839
+2  id11943  0.128484  0.029942  0.841573
+3  id19526  0.146634  0.229249  0.624117
+4  id12931  0.167536  0.108787  0.723677

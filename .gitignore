@@ -21,7 +21,6 @@ logs/
 data/
 mlebench-data/
 mle-bench/
-aideml/
 *.csv
 !tests/**/*.csv
 # full-run trace bundles (run.json, llm_calls.jsonl, artifacts/) live under runs/

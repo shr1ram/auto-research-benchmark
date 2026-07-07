@@ -1,0 +1,2 @@
+GRADED 0.80404
+ORACLE_RESULT {"task": "ranzcr-clip-catheter-line-classification", "ran": true, "exit_code": 0, "wall_clock_s": 105, "submission_written": true, "peak_gpu_mib": 1072, "max_gpu_util": 73, "score": 0.80404, "valid": true, "median": 0.9675, "gold": 0.97357, "above_median": false, "any_medal": false, "grade_error": null}

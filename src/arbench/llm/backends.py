@@ -1,7 +1,7 @@
 """Pluggable LLM backends for driving autoresearch systems.
 
-Three backends, all reachable the same way because AIDE (and most OpenAI-API
-clients) route to an OpenAI-compatible endpoint whenever OPENAI_BASE_URL is set
+Three backends, all reachable the same way because most OpenAI-API
+clients route to an OpenAI-compatible endpoint whenever OPENAI_BASE_URL is set
 and the model name is not a gpt-/claude-/gemini- prefix:
 
   - "litellm"  : the team LiteLLM proxy (litellm.yangtzeailab.com/v1).
@@ -9,11 +9,12 @@ and the model name is not a gpt-/claude-/gemini- prefix:
                  deepseek-v4-flash.
   - "claude_p" : Claude via an OpenAI-compatible base URL (e.g. claude-code
                  proxy / Anthropic-compatible gateway). Model name keeps a
-                 "claude-" prefix so AIDE's native Anthropic path can also be used.
+                 "claude-" prefix so a native Anthropic path can also be used.
   - "local"    : local Ollama on the UCL GPU box (127.0.0.1:11435/v1), e.g.
                  qwen3.6-64k:27b-q4_K_M.
 
-`configure_aide_env` sets the env vars AIDE reads; `resolve_backend` returns the
+`configure_llm_env` sets the env vars OpenAI-compatible clients read;
+`resolve_backend` returns the
 resolved (base_url, model, api_key) for logging / programmatic use.
 
 Secrets are read from the environment (loaded from the box's env-profiles), never
@@ -41,11 +42,11 @@ class Backend:
     base_url: str
     model: str
     api_key: str
-    # The model used for AIDE's lighter feedback/report calls (default = model).
+    # The model used for lighter feedback/report calls (default = model).
     feedback_model: str
 
     def env(self) -> dict[str, str]:
-        """The environment AIDE's OpenAI-compatible client reads."""
+        """The environment an OpenAI-compatible client reads."""
         return {
             "OPENAI_BASE_URL": self.base_url,
             "OPENAI_API_KEY": self.api_key,
@@ -89,9 +90,9 @@ def resolve_backend(backend: str, model: str | None = None) -> Backend:
     )
 
 
-def configure_aide_env(backend: str, model: str | None = None) -> Backend:
-    """Set process env so AIDE's LLM client targets `backend`. Returns the
-    resolved Backend for logging."""
+def configure_llm_env(backend: str, model: str | None = None) -> Backend:
+    """Set process env so the adapter's OpenAI-compatible LLM client targets
+    `backend`. Returns the resolved Backend for logging."""
     b = resolve_backend(backend, model=model)
     os.environ.update(b.env())
     return b

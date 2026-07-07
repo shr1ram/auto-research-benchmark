@@ -1,0 +1,16 @@
+{
+  "task": "jigsaw-toxic-comment-classification-challenge",
+  "ran": true,
+  "exit_code": 0,
+  "wall_clock_s": 211,
+  "submission_written": true,
+  "peak_gpu_mib": 87,
+  "max_gpu_util": 0,
+  "score": 0.9802,
+  "valid": true,
+  "median": 0.98079,
+  "gold": 0.9874,
+  "above_median": false,
+  "any_medal": false,
+  "grade_error": null
+}

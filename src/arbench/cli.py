@@ -1,7 +1,7 @@
 """arbench CLI — run an autoresearch system against a benchmark task.
 
     arbench list
-    arbench run --adapter aide --benchmark mlebench_lite \
+    arbench run --adapter continual --benchmark mlebench_lite \
         --task random-acts-of-pizza --steps 10 --backend litellm \
         --workspace /cs/.../runs/raop --data-dir /cs/.../mlebench-data
 """
@@ -32,7 +32,7 @@ def list_cmd() -> None:
 
 
 @main.command("run")
-@click.option("--adapter", required=True, help="autoresearch system, e.g. aide")
+@click.option("--adapter", required=True, help="autoresearch system, e.g. continual")
 @click.option("--benchmark", required=True, help="benchmark, e.g. mlebench_lite")
 @click.option("--task", "task_id", required=True, help="task/competition id")
 @click.option("--workspace", required=True, type=click.Path(),

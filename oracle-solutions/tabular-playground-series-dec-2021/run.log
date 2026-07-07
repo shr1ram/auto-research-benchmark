@@ -1,0 +1,4 @@
+Training until validation scores don't improve for 20 rounds
+Early stopping, best iteration is:
+[17]	valid_0's multi_logloss: 0.209995
+done (400000, 2)

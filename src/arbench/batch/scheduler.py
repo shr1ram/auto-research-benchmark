@@ -1,7 +1,7 @@
 """The batch scheduler: assign jobs to free GPU boxes, run them concurrently,
 track progress, release boxes, and resume cleanly.
 
-Model: one job per box at a time (an AIDE run wants the whole GPU). The shared
+Model: one job per box at a time (a run wants the whole GPU). The shared
 project FS means every box sees the same code/venv/data and writes its run
 bundle to the same output tree — so the scheduler just needs to pick a box, ssh
 `arbench run` to it, and collect the result.

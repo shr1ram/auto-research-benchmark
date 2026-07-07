@@ -1,4 +1,4 @@
-"""Backend resolution tests — the LLM plumbing AIDE rides on."""
+"""Backend resolution tests — the LLM plumbing adapters ride on."""
 from __future__ import annotations
 
 import pytest
@@ -14,7 +14,7 @@ def test_litellm_defaults_to_kimi(monkeypatch):
     assert b.model == KIMI_MODEL
     assert b.base_url == LITELLM_BASE_URL
     assert b.api_key == "sk-test"
-    # AIDE routes to its OpenAI-compatible backend off these env keys.
+    # OpenAI-compatible clients route off these env keys.
     env = b.env()
     assert env["OPENAI_BASE_URL"] == LITELLM_BASE_URL
     assert env["OPENAI_API_KEY"] == "sk-test"

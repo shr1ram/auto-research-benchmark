@@ -1,0 +1,16 @@
+{
+  "task": "spooky-author-identification",
+  "ran": true,
+  "exit_code": 0,
+  "wall_clock_s": 29,
+  "submission_written": true,
+  "peak_gpu_mib": 21433,
+  "max_gpu_util": 100,
+  "score": 0.50719,
+  "valid": true,
+  "median": 0.418785,
+  "gold": 0.16506,
+  "above_median": false,
+  "any_medal": false,
+  "grade_error": null
+}

@@ -1,0 +1,16 @@
+{
+  "task": "tabular-playground-series-may-2022",
+  "ran": true,
+  "exit_code": 0,
+  "wall_clock_s": 30,
+  "submission_written": true,
+  "peak_gpu_mib": 111,
+  "max_gpu_util": 0,
+  "score": 0.92955,
+  "valid": true,
+  "median": 0.972675,
+  "gold": 0.99823,
+  "above_median": false,
+  "any_medal": false,
+  "grade_error": null
+}

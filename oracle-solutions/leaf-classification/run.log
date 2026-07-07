@@ -1,0 +1,17 @@
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+CV neg_log_loss: -0.08290575031699325 +/- 0.037240299101006485
+/cs/student/project_msc/2025/csml/sruppage/auto-research-benchmark/.venv/lib/python3.11/site-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.
+  warnings.warn(
+wrote submission.csv (99, 100)
+     id  Acer_Capillipes  Acer_Circinatum     Acer_Mono
+0  1202     5.317386e-12     2.939307e-11  1.505251e-07
+1   992     1.379782e-08     2.768994e-12  1.113299e-14

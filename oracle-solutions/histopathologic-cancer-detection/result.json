@@ -1,0 +1,16 @@
+{
+  "task": "histopathologic-cancer-detection",
+  "ran": true,
+  "exit_code": 0,
+  "wall_clock_s": 33,
+  "submission_written": true,
+  "peak_gpu_mib": 1217,
+  "max_gpu_util": 96,
+  "score": 0.98609,
+  "valid": true,
+  "median": 0.9477,
+  "gold": 0.9835,
+  "above_median": true,
+  "any_medal": true,
+  "grade_error": null
+}

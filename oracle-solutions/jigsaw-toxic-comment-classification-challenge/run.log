@@ -1,0 +1,15 @@
+train=(159571, 8) test=(153164, 2) sample=(153164, 7)
+word tfidf done t=29.4s
+char tfidf done t=146.7s
+X_train=(159571, 100000) X_test=(153164, 100000)
+label toxic done t=157.9s
+label severe_toxic done t=167.1s
+label obscene done t=176.5s
+label threat done t=185.0s
+label insult done t=195.0s
+label identity_hate done t=204.0s
+submission written rows=153164 t=204.8s
+                 id     toxic  severe_toxic   obscene    threat    insult  identity_hate
+0  00001cee341fdb12  0.999893      0.244476  0.999658  0.037708  0.985420       0.316464
+1  0000247867823ef7  0.006332      0.002320  0.003302  0.000667  0.005148       0.002533
+2  00013b17ad220c46  0.014841      0.003531  0.007888  0.000975  0.005093       0.002046

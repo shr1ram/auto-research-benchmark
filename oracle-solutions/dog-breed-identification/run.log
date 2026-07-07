@@ -1,0 +1,26 @@
+device: cuda NVIDIA GeForce RTX 3090 Ti
+train (9199, 3) test (1023, 121)
+loaded pretrained resnet18
+epoch 1/18 loss=3.2012 t=12s
+epoch 2/18 loss=1.3751 t=21s
+epoch 3/18 loss=1.6730 t=30s
+epoch 4/18 loss=1.3564 t=39s
+epoch 5/18 loss=1.0743 t=48s
+epoch 6/18 loss=0.8838 t=57s
+epoch 7/18 loss=0.6496 t=66s
+epoch 8/18 loss=0.4705 t=75s
+epoch 9/18 loss=0.3202 t=84s
+epoch 10/18 loss=0.2156 t=94s
+epoch 11/18 loss=0.1479 t=103s
+epoch 12/18 loss=0.0795 t=112s
+epoch 13/18 loss=0.0581 t=121s
+epoch 14/18 loss=0.0448 t=130s
+epoch 15/18 loss=0.0323 t=139s
+epoch 16/18 loss=0.0273 t=148s
+epoch 17/18 loss=0.0280 t=157s
+epoch 18/18 loss=0.0232 t=166s
+inference done t= 167
+wrote submission.csv (1023, 121) total t= 167
+                                 id  affenpinscher  afghan_hound  african_hunting_dog
+0  9f68d045a396679a778eb54c5ed29038   2.774877e-13  1.061532e-09         1.485793e-13
+1  f375e6363bc21dcd3cb65637c7855e9c   1.899200e-06  7.898623e-07         5.185856e-08

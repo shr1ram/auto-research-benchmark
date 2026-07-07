@@ -5,7 +5,7 @@ against **arbitrary benchmarks**, behind two stable contracts:
 
 | | contract | meaning |
 |---|---|---|
-| **Entry** | `AutoResearchAdapter.run(task, workspace) -> submission` | drive a system (AIDE, continual-auto-research, …) to produce a submission |
+| **Entry** | `AutoResearchAdapter.run(task, workspace) -> submission` | drive a system to produce a submission |
 | **Exit** | `Benchmark.grade(task, submission) -> Score` | grade that submission, ignorant of which system made it |
 
 That asymmetry — the grader never knows who produced the submission — is what
@@ -13,7 +13,7 @@ lets you compare systems fairly on the same task.
 
 First benchmark wired up: **MLE-Bench Lite** (OpenAI's
 [mle-bench](https://github.com/openai/mle-bench) low-complexity split).
-First system wired up: **[AIDE](https://github.com/WecoAI/aideml)**.
+The baseline design is memory-free vs with-memory runs of the SAME system — no cross-system comparison. (The original AIDE integration was removed 2026-07-07.)
 
 ## Architecture
 
@@ -27,7 +27,6 @@ arbench/
 │   ├── runner.py      # load_task -> prepare -> run -> grade
 │   └── registry.py    # name -> adapter / benchmark
 ├── adapters/
-│   ├── aide_adapter.py        # drives forked AIDE
 │   └── continual_adapter.py   # continual-auto-research (stub)
 ├── benchmarks/
 │   └── mlebench_lite/         # wraps openai/mle-bench (registry + grade_csv)
@@ -40,7 +39,7 @@ implementing three (`list_tasks`, `load_task`, `grade`). Nothing else changes.
 
 ## LLM backends
 
-AIDE (and most OpenAI-API clients) route to an OpenAI-compatible endpoint when
+Most OpenAI-API clients route to an OpenAI-compatible endpoint when
 `OPENAI_BASE_URL` is set and the model name isn't a `gpt-`/`claude-`/`gemini-`
 prefix. We exploit that to make the backend pluggable:
 
@@ -56,9 +55,9 @@ uv pip install -e .                 # the harness itself (tiny deps)
 
 arbench list                        # show registered adapters + benchmarks
 
-# Run AIDE on one MLE-Bench Lite competition (on the GPU box):
+# Run an adapter on one MLE-Bench Lite competition (on the GPU box):
 arbench run \
-  --adapter aide --benchmark mlebench_lite \
+  --adapter continual --benchmark mlebench_lite \
   --task random-acts-of-pizza \
   --backend litellm                 # -> Kimi-K2.6 \
   --steps 10 \
@@ -77,7 +76,7 @@ arbench run \
 3. Prepared data: `mlebench prepare -c <competition>` (point its cache at the
    project filesystem, not NFS home).
 
-The harness itself imports and tests cleanly **without** AIDE or mlebench
+The harness itself imports and tests cleanly **without** mlebench
 installed — those are only needed to actually run/grade.
 
 ## Parallel sweeps across GPU boxes (`arbench batch`)
@@ -90,7 +89,7 @@ and is **resumable** (a job whose `run.json` exists is skipped).
 
 ```bash
 arbench batch \
-  --adapter aide --benchmark mlebench_lite \
+  --adapter continual --benchmark mlebench_lite \
   --tasks all-lite            # or a,b,c  or @file \
   --seeds 3                   # independent repeats -> variance/error bars \
   --arms baseline             # later: baseline,continual \

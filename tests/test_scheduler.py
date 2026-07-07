@@ -73,7 +73,7 @@ def _intercept_dispatch(monkeypatch, cmd_body):
 def test_all_jobs_run_and_succeed(tmp_path, patched, monkeypatch):
     _intercept_dispatch(monkeypatch, _fake_run_cmd(success=True))
     jobs = expand_worklist(tasks=["t1", "t2", "t3", "t4"], seeds=1, arms=["baseline"],
-                           adapter="aide", benchmark="b", sweep_dir=tmp_path,
+                           adapter="continual", benchmark="b", sweep_dir=tmp_path,
                            steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=2,
                             venv_activate="x", repo_dir="x", data_dir="x",
@@ -87,7 +87,7 @@ def test_all_jobs_run_and_succeed(tmp_path, patched, monkeypatch):
 
 def test_resume_skips_done_jobs(tmp_path, patched, monkeypatch):
     jobs = expand_worklist(tasks=["t1", "t2"], seeds=1, arms=["baseline"],
-                           adapter="aide", benchmark="b", sweep_dir=tmp_path,
+                           adapter="continual", benchmark="b", sweep_dir=tmp_path,
                            steps=1, backend="litellm", model=None)
     # pre-complete t1
     jobs[0].out_dir.mkdir(parents=True)
@@ -104,7 +104,7 @@ def test_failed_job_is_recorded_not_crash(tmp_path, patched, monkeypatch):
     # remote exits 2 AND writes no run.json -> failed
     _intercept_dispatch(monkeypatch, _fake_run_cmd(success=False, write_json=False))
     jobs = expand_worklist(tasks=["t1", "t2"], seeds=1, arms=["baseline"],
-                           adapter="aide", benchmark="b", sweep_dir=tmp_path,
+                           adapter="continual", benchmark="b", sweep_dir=tmp_path,
                            steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=2,
                             venv_activate="x", repo_dir="x", data_dir="x",
@@ -144,7 +144,7 @@ def test_failed_job_is_requeued_and_can_succeed(tmp_path, patched, monkeypatch):
     monkeypatch.setattr(sch.subprocess, "Popen", fake_popen)
 
     jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"],
-                           adapter="aide", benchmark="b", sweep_dir=tmp_path,
+                           adapter="continual", benchmark="b", sweep_dir=tmp_path,
                            steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
                             venv_activate="x", repo_dir="x", data_dir="x",
@@ -159,7 +159,7 @@ def test_hung_job_is_timed_out(tmp_path, patched, monkeypatch):
     # remote sleeps 30s but never writes run.json; timeout=1s -> killed
     _intercept_dispatch(monkeypatch, _fake_run_cmd(success=True, sleep=30, write_json=False))
     jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"],
-                           adapter="aide", benchmark="b", sweep_dir=tmp_path,
+                           adapter="continual", benchmark="b", sweep_dir=tmp_path,
                            steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
                             venv_activate="x", repo_dir="x", data_dir="x",
@@ -182,7 +182,7 @@ def test_persistent_dispatch_failure_fails_job_not_hangs(tmp_path, patched, monk
                         lambda job, **kw: "true --workspace " + str(job.out_dir))
     monkeypatch.setattr(sch.subprocess, "Popen", always_fail)
 
-    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="aide",
+    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="continual",
                            benchmark="b", sweep_dir=tmp_path, steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
                             venv_activate="x", repo_dir="x", data_dir="x",
@@ -212,7 +212,7 @@ def test_dispatch_failure_requeues_not_loses_job(tmp_path, patched, monkeypatch)
                         lambda job, **kw: _fake_run_cmd(True) + f" --workspace {job.out_dir}")
     monkeypatch.setattr(sch.subprocess, "Popen", flaky_popen)
 
-    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="aide",
+    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="continual",
                            benchmark="b", sweep_dir=tmp_path, steps=1, backend="litellm", model=None)
     summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
                             venv_activate="x", repo_dir="x", data_dir="x",

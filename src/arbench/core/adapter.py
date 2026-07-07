@@ -1,6 +1,6 @@
 """The ENTRY contract.
 
-An AutoResearchAdapter wraps one autoresearch system (AIDE, continual-auto-
+An AutoResearchAdapter wraps one autoresearch system (continual-auto-
 research, ...) so the runner can drive it uniformly. The contract is tiny on
 purpose: the harness owns the workspace and the task; the system owns *how* it
 gets from goal -> submission.
@@ -14,7 +14,7 @@ from arbench.core.task import Task
 
 
 class AutoResearchAdapter(ABC):
-    #: Short stable name, e.g. "aide". Used in results and the registry.
+    #: Short stable name, e.g. "continual". Used in results and the registry.
     name: str = "unnamed"
 
     def prepare(self, task: Task, workspace: Path) -> None:

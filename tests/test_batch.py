@@ -14,7 +14,7 @@ from arbench.batch import boxes as bx
 def test_worklist_cartesian(tmp_path):
     jobs = expand_worklist(
         tasks=["a", "b"], seeds=3, arms=["baseline", "continual"],
-        adapter="aide", benchmark="mlebench_lite", sweep_dir=tmp_path,
+        adapter="continual", benchmark="mlebench_lite", sweep_dir=tmp_path,
         steps=8, backend="litellm", model=None,
     )
     assert len(jobs) == 2 * 3 * 2  # tasks × seeds × arms
@@ -25,7 +25,7 @@ def test_worklist_cartesian(tmp_path):
 
 
 def test_job_is_done_detects_run_json(tmp_path):
-    j = Job(task_id="a", seed=0, arm="baseline", adapter="aide",
+    j = Job(task_id="a", seed=0, arm="baseline", adapter="continual",
             benchmark="mlebench_lite", out_dir=tmp_path / "a-seed0",
             steps=8, backend="litellm", model=None)
     assert not j.is_done()

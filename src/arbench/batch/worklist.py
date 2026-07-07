@@ -1,7 +1,7 @@
 """Expand a sweep spec (tasks × seeds × arms) into a flat list of Jobs.
 
 A Job is one `arbench run` invocation: a (task, seed, arm) triple with its own
-output dir. Seeds are independent repeats (AIDE/LLM stochasticity gives the
+output dir. Seeds are independent repeats (LLM stochasticity gives the
 variance); arms are e.g. "baseline" vs "continual" once that adapter exists.
 """
 from __future__ import annotations

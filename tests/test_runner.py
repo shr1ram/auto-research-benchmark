@@ -1,4 +1,4 @@
-"""Harness contract tests using fakes — no AIDE/mlebench needed. Proves the
+"""Harness contract tests using fakes — no real adapter/mlebench needed. Proves the
 entry/exit contracts compose: a fake autoresearch system + fake benchmark run
 end-to-end through the runner, and failures degrade to invalid scores.
 """
@@ -95,7 +95,7 @@ def test_crash_after_submission_is_still_graded(tmp_path):
 def test_rerun_clears_stale_adapter_outputs(tmp_path):
     ws = tmp_path / "reused"
     # Simulate a previous attempt's leftovers: adapter output trees + submission.
-    for d in ("car_iters/iter_000", "car_best", "aide_run/logs/n0"):
+    for d in ("car_iters/iter_000", "car_best"):
         (ws / d).mkdir(parents=True)
         (ws / d / "submission.csv").write_text("42")
     (ws / "submission.csv").write_text("42")
@@ -107,7 +107,6 @@ def test_rerun_clears_stale_adapter_outputs(tmp_path):
     # ...because the stale trees were cleared before the adapter ran.
     assert not (ws / "car_iters").exists()
     assert not (ws / "car_best").exists()
-    assert not (ws / "aide_run").exists()
     assert not (ws / "submission.csv").exists()
 
 

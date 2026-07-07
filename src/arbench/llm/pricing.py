@@ -4,7 +4,7 @@ The team LiteLLM proxy is (effectively) free to us, so a raw bill isn't
 meaningful. For comparability across systems and write-ups we report an
 **OpenRouter-equivalent** cost: what the same token usage would cost at public
 OpenRouter list prices for the model actually used. This makes baseline numbers
-portable ("AIDE on RAOP ≈ $X of LLM at OpenRouter rates").
+portable ("one RAOP run ≈ $X of LLM at OpenRouter rates").
 
 Prices are USD per 1M tokens, (prompt, completion). Update as list prices change;
 unknown models fall back to a conservative default and are flagged.

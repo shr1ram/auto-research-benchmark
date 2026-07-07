@@ -7,9 +7,9 @@ A run produces, inside its workspace, a self-contained bundle:
       llm_calls.jsonl          # one record per LLM call (prompt, response, tokens, timing)
       submission.csv           # the graded artifact
       run.log                  # stdout/stderr of the adapter
-      artifacts/               # copied AIDE journal, best solution, tree plot, etc.
+      artifacts/               # copied adapter reconstruction artifacts
 
-The per-call JSONL is written by the LLM backend during the run (the AIDE fork
+The per-call JSONL is written by the LLM backend during the run (the LLM client
 appends to $ARBENCH_LLM_TRACE); arbench reads it back to aggregate tokens, cost,
 and timing. Everything here is plain JSON so a run is fully reconstructable
 offline, with no live services.
@@ -115,7 +115,7 @@ class RunMeta:
     host: str = field(default_factory=platform.node)
     python: str = field(default_factory=platform.python_version)
     arbench_sha: Optional[str] = None
-    adapter_repo_sha: Optional[str] = None   # e.g. the AIDE fork HEAD
+    adapter_repo_sha: Optional[str] = None   # e.g. the adapter repo HEAD
     env_snapshot: dict[str, str] = field(default_factory=dict)
 
 

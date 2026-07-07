@@ -7,7 +7,7 @@ ABC surface, so any (adapter, benchmark) pair composes.
 
 It also produces a full, gitignored run bundle for reproducibility: run.json
 (metadata + token/cost/timing aggregates), llm_calls.jsonl (every LLM call),
-the submission, and copied adapter artifacts (AIDE journal/best-solution/tree).
+the submission, and copied adapter artifacts.
 """
 from __future__ import annotations
 
@@ -30,15 +30,15 @@ _ARBENCH_REPO = Path(__file__).resolve().parents[3]
 _ENV_KEYS = (
     "ARBENCH_LLM_BACKEND", "ARBENCH_LLM_MODEL", "DEFAULT_API_BASE_URL",
     "OPENAI_BASE_URL", "MLEBENCH_DATA_DIR", "MLEBENCH_PRIVATE_DATA_DIR",
-    "OPENML_DATA_DIR", "AIDE_STEPS",
+    "OPENML_DATA_DIR",
     "OPENAI_REQUEST_TIMEOUT", "OPENAI_MAX_RETRIES",
 )
 
 # Adapter output trees that must not survive into a re-run of the same workspace:
-# both submission finders (aide/continual) glob the newest submission.csv under
+# adapters glob the newest submission.csv under
 # these, so a stale tree lets a FAILED re-run be graded on the previous attempt's
 # file.
-_STALE_ADAPTER_DIRS = ("car_iters", "car_best", "aide_run")
+_STALE_ADAPTER_DIRS = ("car_iters", "car_best")
 
 
 def _clear_stale_attempt(workspace: Path, submission_path: Path) -> None:
@@ -68,14 +68,11 @@ def _clear_stale_attempt(workspace: Path, submission_path: Path) -> None:
 
 def _collect_artifacts(workspace: Path) -> None:
     """Copy the adapter's key reconstruction artifacts into <workspace>/artifacts.
-    For AIDE: journal.json, best_solution.py, tree_plot.html, config.yaml."""
+    Patterns are per-adapter; none registered currently (the retired AIDE globs
+    lived here) — the new system's adapter adds its own."""
     art = workspace / "artifacts"
     art.mkdir(exist_ok=True)
-    # AIDE writes logs under aide_run/logs/<node>/...
-    for pat in ("aide_run/logs/**/journal.json",
-                "aide_run/logs/**/best_solution.py",
-                "aide_run/logs/**/tree_plot.html",
-                "aide_run/logs/**/config.yaml"):
+    for pat in ():
         for src in workspace.glob(pat):
             # flatten name with the node dir to avoid collisions
             dest = art / f"{src.parent.name}__{src.name}"
@@ -111,7 +108,7 @@ def run_one(
     # attempt's submission.
     _clear_stale_attempt(workspace, submission_path)
 
-    # Point the LLM backend's call-trace sink at this run's JSONL (the AIDE fork
+    # Point the LLM backend's call-trace sink at this run's JSONL (the LLM client
     # appends one record per call). NOTE: $ARBENCH_LLM_TRACE is process-global —
     # run_one is one-run-per-process, NOT thread/async safe. The batch scheduler
     # runs each job in its own ssh'd process, so that's fine.

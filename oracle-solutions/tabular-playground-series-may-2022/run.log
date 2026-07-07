@@ -1,0 +1,4 @@
+Training until validation scores don't improve for 30 rounds
+Did not meet early stopping. Best iteration is:
+[399]	valid_0's auc: 0.930069
+done (100000, 2)

@@ -1,8 +1,8 @@
 """Tests for the full-run capture: LLM-call trace, cost estimate, run bundle.
 
-Uses a fake adapter that emits trace records exactly as the AIDE fork does
+Uses a fake adapter that emits trace records exactly as an instrumented LLM client does
 (appending to $ARBENCH_LLM_TRACE), so we exercise the whole capture path without
-AIDE/mlebench installed.
+a real adapter/mlebench installed.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class FakeBenchmark(Benchmark):
 
 
 class TracingAdapter(AutoResearchAdapter):
-    """Mimics AIDE: makes 'LLM calls' that append trace records, then writes a
+    """Mimics a real adapter: makes 'LLM calls' that append trace records, then writes a
     submission. Uses the same env-var contract the real backend uses."""
     name = "tracer"
     model = "Kimi-K2.6"
@@ -41,7 +41,7 @@ class TracingAdapter(AutoResearchAdapter):
     steps = 3
 
     def run(self, task, workspace):
-        # two coder calls + one feedback call, like a small AIDE run
+        # two coder calls + one feedback call, like a small real run
         record_llm_call(model="Kimi-K2.6", role="code",
                         prompt_tokens=1000, completion_tokens=2000, latency_s=12.5,
                         system="sys", user="draft a model", response="import pandas")

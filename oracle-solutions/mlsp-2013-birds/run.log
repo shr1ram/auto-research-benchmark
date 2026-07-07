@@ -1,0 +1,9 @@
+train recs: 258, test recs: 64
+  extracted 50/322
+  extracted 100/322
+  extracted 150/322
+  extracted 200/322
+  extracted 250/322
+  extracted 300/322
+CV macro-AUC: 0.5000
+wrote submission.csv with 1216 rows

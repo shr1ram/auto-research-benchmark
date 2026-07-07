@@ -43,7 +43,7 @@ from arbench.core.adapter import AutoResearchAdapter
 from arbench.core.task import Task
 from arbench.core.registry import register_adapter
 from arbench.core.trace import record_llm_call
-from arbench.llm.backends import configure_aide_env, resolve_backend
+from arbench.llm.backends import configure_llm_env, resolve_backend
 
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -452,7 +452,7 @@ class ContinualAdapter(AutoResearchAdapter):
 
     def prepare(self, task: Task, workspace: Path) -> None:
         # Reuse the same backend env wiring as AIDE (LiteLLM/Kimi by default).
-        configure_aide_env(self.backend, model=self.model)
+        configure_llm_env(self.backend, model=self.model)
         if not os.environ.get("OPENAI_BASE_URL"):
             raise RuntimeError(
                 "OPENAI_BASE_URL is unset; the OpenAI-compatible proposer would "

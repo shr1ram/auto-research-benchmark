@@ -1,0 +1,10 @@
+device cuda
+train subsample 2052 pos 513 neg 1539
+test 4142
+epoch 0 loss 0.9072 elapsed 21s
+epoch 1 loss 0.7038 elapsed 42s
+epoch 2 loss 0.6147 elapsed 62s
+epoch 3 loss 0.5975 elapsed 82s
+wrote submission.csv rows 4142 cols ['image_name', 'target']
+pred stats min/mean/max 0.0 0.3000770276551774 0.98828125
+total elapsed 128.80374002456665
