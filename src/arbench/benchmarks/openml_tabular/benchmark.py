@@ -7,9 +7,11 @@ never knowing which autoresearch system produced them. Data is staged by
 Grading reads `answers.csv` (held-out ground truth) and the agent's `submission.csv`,
 computes the task's metric with sklearn, and returns a clean Score — never raises.
 
-FIREWALL: the agent's data_dir is `<task>/prepared/`; the ground truth lives in
-`<task>/private/answers.csv`, a SIBLING of prepared/ that is never handed out and
-never named in Task metadata. load_task refuses to serve a task whose prepared/
+FIREWALL: the agent's data_dir is `$OPENML_DATA_DIR/<task>/prepared/` — a PUBLIC
+tree that can be bind-mounted whole into containered runs. The ground truth lives
+under a separate PRIVATE root: `$OPENML_PRIVATE_DATA_DIR/<task>/answers.csv`
+(default: the sibling `private/` of the public root, i.e. data/openml/{public,private}).
+It is never handed out and never named in Task metadata. load_task refuses to serve a task whose prepared/
 still contains a legacy answers.csv (pre-firewall layout) — re-prep or migrate.
 """
 from __future__ import annotations
@@ -34,8 +36,10 @@ def _data_root() -> Path | None:
 class OpenMLTabular(Benchmark):
     name = "openml_tabular"
 
-    def __init__(self, data_dir: str | None = None):
+    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None):
         self.data_dir = Path(data_dir) if data_dir else _data_root()
+        priv = private_data_dir or os.environ.get("OPENML_PRIVATE_DATA_DIR", "")
+        self.private_dir = Path(priv) if priv else None
 
     def _prepared(self, task_id: str) -> Path:
         if not self.data_dir:
@@ -43,11 +47,14 @@ class OpenMLTabular(Benchmark):
         return self.data_dir / task_id / "prepared"
 
     def _answers(self, task_id: str) -> Path:
-        """Grader-only ground truth: <task>/private/answers.csv, OUTSIDE the
-        prepared/ dir the agent is handed. Never expose this path to a Task."""
+        """Grader-only ground truth: <private root>/<task>/answers.csv, in a tree
+        SEPARATE from the public root the agent (and the container bind) sees.
+        Never expose this path to a Task."""
+        if self.private_dir:
+            return self.private_dir / task_id / "answers.csv"
         if not self.data_dir:
             raise RuntimeError("OPENML_DATA_DIR not set (point it at the project FS).")
-        return self.data_dir / task_id / "private" / "answers.csv"
+        return self.data_dir.parent / "private" / task_id / "answers.csv"
 
     def list_tasks(self) -> Iterable[str]:
         seen, ordered = set(), []

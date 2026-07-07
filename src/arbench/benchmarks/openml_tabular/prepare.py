@@ -9,8 +9,10 @@ minio parquet endpoint — no `openml` pip dep), then write a fixed, seeded spli
         sample_submission.csv
         description.md    # goal text for the Task
         meta.json         # {metric, higher_better, kind, target, id_col, dataset_id, n_train, n_test}
-    $OPENML_DATA_DIR/<task_id>/private/          # <- grader-only, NEVER inside data_dir
+    $OPENML_PRIVATE_DATA_DIR/<task_id>/          # <- grader-only, SEPARATE private tree
         answers.csv      # id,target           (held-out ground truth)
+    (OPENML_PRIVATE_DATA_DIR defaults to the sibling `private/` of the public root,
+    giving data/openml/{public,private} — the public root is container-bindable.)
 
 FIREWALL: answers.csv must never live under prepared/ — that directory is handed
 to the agent verbatim as its data dir, so anything in it is agent-readable.
@@ -72,10 +74,10 @@ def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str]:
     return df, default_target
 
 
-def prepare_one(spec, data_root: Path) -> dict:
+def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
     out = data_root / spec.task_id / "prepared"
     out.mkdir(parents=True, exist_ok=True)
-    private = data_root / spec.task_id / "private"   # grader-only, outside data_dir
+    private = private_root / spec.task_id   # grader-only, outside the public tree
     private.mkdir(parents=True, exist_ok=True)
     df, default_target = _download_openml_csv(spec.dataset_id)
     # Prefer OpenML's authoritative default_target_attribute; fall back to the
@@ -144,6 +146,8 @@ def main(argv):
     if not root:
         raise SystemExit("set OPENML_DATA_DIR (project FS)")
     data_root = Path(root)
+    proot = os.environ.get("OPENML_PRIVATE_DATA_DIR")
+    private_root = Path(proot) if proot else data_root.parent / "private"
     ids = argv[1:] or [t.task_id for t in ALL_TASKS]
     ok, fail = [], []
     for tid in ids:
@@ -151,7 +155,7 @@ def main(argv):
         if not spec:
             print(f"SKIP unknown task {tid}"); continue
         try:
-            m = prepare_one(spec, data_root)
+            m = prepare_one(spec, data_root, private_root)
             print(f"OK  {tid:16s} train={m['n_train']:>7d} test={m['n_test']:>6d} "
                   f"feat={m['n_features']:>3d} metric={m['metric']}")
             ok.append(tid)
