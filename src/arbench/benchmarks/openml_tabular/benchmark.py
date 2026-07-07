@@ -24,6 +24,7 @@ from typing import Iterable
 from arbench.core.benchmark import Benchmark
 from arbench.core.task import Task
 from arbench.core.result import Score
+from arbench.core.data_version import compute_data_version, verify_data_version
 from arbench.benchmarks.openml_tabular.tasks import ALL_TASKS, SMALL_FIRST, BY_ID
 
 
@@ -81,6 +82,7 @@ class OpenMLTabular(Benchmark):
                 f"to {self._answers(task_id)} (or re-run prepare.py) before "
                 f"serving this task."
             )
+        data_version = verify_data_version(prep)   # loud on drift (plan §2)
         meta = json.loads((prep / "meta.json").read_text())
         goal = (prep / "description.md").read_text()
         goal += (f"\nRead the training data under: {prep}\n"
@@ -100,6 +102,7 @@ class OpenMLTabular(Benchmark):
                 "target": meta["target"],
                 "id_col": meta["id_col"],
                 "sample_submission": str(prep / "sample_submission.csv"),
+                "data_version": data_version,
             },
         )
 
@@ -154,5 +157,9 @@ class OpenMLTabular(Benchmark):
 
         return Score(value=val, valid=True, is_higher_better=hb,
                      details={"metric": metric, "kind": meta.get("kind"),
-                              "n_test": int(len(merged))})
+                              "n_test": int(len(merged)),
+                              # recomputed HERE (the audit hook): catches data
+                              # that changed between load and grade
+                              "data_version": compute_data_version(task.data_dir)
+                              if task.data_dir else ""})
 
