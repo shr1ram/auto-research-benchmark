@@ -1,69 +1,72 @@
 # auto-research-benchmark
 
-A small, system-agnostic harness for running **arbitrary autoresearch systems**
-against **arbitrary benchmarks**, behind two stable contracts:
+Benchmark tasks + held-out grading, as a **library**. Two stable contracts:
 
 | | contract | meaning |
 |---|---|---|
-| **Entry** | `AutoResearchAdapter.run(task, workspace) -> submission` | drive a system to produce a submission |
-| **Exit** | `Benchmark.grade(task, submission) -> Score` | grade that submission, ignorant of which system made it |
+| **Entry** | `Benchmark.load_task(id) -> Task` | what the problem is (agent-visible view only) |
+| **Exit** | `Benchmark.grade(task, submission) -> Score` | grade a submission, ignorant of which system made it |
 
 That asymmetry — the grader never knows who produced the submission — is what
-lets you compare systems fairly on the same task.
-
-First benchmark wired up: **MLE-Bench Lite** (OpenAI's
-[mle-bench](https://github.com/openai/mle-bench) low-complexity split).
-The baseline design is memory-free vs with-memory runs of the SAME system — no cross-system comparison. (The original AIDE integration was removed 2026-07-07.)
+lets grading stay fair. **Nothing here drives an agent**: the consuming system
+(the thesis repo's loop) lists tasks, loads them, runs itself, and calls
+`grade` at the end. (The pre-2026-07 adapter/runner/batch driving layers were
+pruned; the agent loop, LLM client, traces, and grid scheduling all live in the
+thesis repo now.)
 
 ## Architecture
 
 ```
 arbench/
 ├── core/
-│   ├── task.py        # Task: benchmark-agnostic unit of work
-│   ├── adapter.py     # AutoResearchAdapter  (ENTRY contract, ABC)
-│   ├── benchmark.py   # Benchmark            (EXIT contract, ABC)
-│   ├── result.py      # Score, RunResult
-│   ├── runner.py      # load_task -> prepare -> run -> grade
-│   └── registry.py    # name -> adapter / benchmark
-├── adapters/
-│   └── continual_adapter.py   # continual-auto-research (stub)
+│   ├── task.py        # Task: benchmark-agnostic unit of work (+ render_goal
+│   │                  #   for container-visible paths)
+│   ├── benchmark.py   # Benchmark ABC: list_tasks / load_task / grade
+│   └── result.py      # Score
 ├── benchmarks/
-│   └── mlebench_lite/         # wraps openai/mle-bench (registry + grade_csv)
-└── llm/
-    └── backends.py    # pluggable LLM: litellm(Kimi) | claude_p | local(Ollama)
+│   ├── mlebench_lite/     # wraps openai/mle-bench (vendor/mle-bench extra)
+│   └── openml_tabular/    # 11 curated tabular tasks (prepare + grade built in)
+├── batch/             # LEGACY: kept only until its scheduler semantics + tests
+│                      #   are ported to the thesis grid driver, then deleted
+└── cli.py             # arbench tasks | arbench grade — the two hand-tools
 ```
 
-A system plugs in by implementing one method (`run`). A benchmark plugs in by
-implementing three (`list_tasks`, `load_task`, `grade`). Nothing else changes.
+A benchmark plugs in by implementing three methods (`list_tasks`, `load_task`,
+`grade`). Library surface: `arbench.get_benchmark(name)` (lazy imports — the
+package works on a bare machine).
 
-## LLM backends
+## Data layout + firewall
 
-Most OpenAI-API clients route to an OpenAI-compatible endpoint when
-`OPENAI_BASE_URL` is set and the model name isn't a `gpt-`/`claude-`/`gemini-`
-prefix. We exploit that to make the backend pluggable:
+Data lives **inside the repo, gitignored** — re-downloadable input owned by the
+plugin that prepares and grades it. Public and private are two distinct roots
+so the answers firewall is mount-level (only the public roots are ever
+container-bindable):
 
-- `litellm` — team LiteLLM proxy (`litellm.yangtzeailab.com/v1`); **default model
-  `Kimi-K2.6`** (also serves `deepseek-v4-flash`). Key from `CUSTOM_API_KEY`.
-- `claude_p` — Claude via an OpenAI-compatible gateway.
-- `local` — local Ollama on the UCL GPU box (`127.0.0.1:11435/v1`).
+```
+data/
+├── mlebench/{public,private}/     # $MLEBENCH_DATA_DIR -> public
+└── openml/{public,private}/       # $OPENML_DATA_DIR   -> public
+                                   # private: <task>/answers.csv, never bound
+```
+
+No answers file exists under any public root — `tests/test_leakage.py` enforces
+it. Task objects never name the private paths.
 
 ## Usage
 
 ```bash
-uv pip install -e .                 # the harness itself (tiny deps)
+uv sync --extra dev                                    # the library (tiny deps)
+uv sync --extra mlebench                               # + vendor/mle-bench, run box only
 
-arbench list                        # show registered adapters + benchmarks
+arbench tasks --benchmark openml_tabular
+arbench grade --benchmark openml_tabular --task wine_quality submission.csv
+```
 
-# Run an adapter on one MLE-Bench Lite competition (on the GPU box):
-arbench run \
-  --adapter continual --benchmark mlebench_lite \
-  --task random-acts-of-pizza \
-  --backend litellm                 # -> Kimi-K2.6 \
-  --steps 10 \
-  --data-dir "$MLEBENCH_DATA_DIR" \
-  --workspace "$PROJECT_FS/runs/raop" \
-  --out result.json
+```python
+import arbench
+bench = arbench.get_benchmark("openml_tabular")   # data dirs from env
+task = bench.load_task("wine_quality")            # public view only
+score = bench.grade(task, submission_path)        # Score(value, valid, ...)
 ```
 
 ### Prerequisites for the MLE-Bench Lite benchmark
@@ -76,47 +79,12 @@ arbench run \
 3. Prepared data: `mlebench prepare -c <competition>` (point its cache at the
    project filesystem, not NFS home).
 
-The harness itself imports and tests cleanly **without** mlebench
-installed — those are only needed to actually run/grade.
-
-## Parallel sweeps across GPU boxes (`arbench batch`)
-
-Runs many `(task × seed × arm)` jobs concurrently across GPU boxes — each one a
-full traced bundle. Self-contained: it discovers free boxes (ssh `nvidia-smi`),
-leases them atomically on the shared FS (no double-claims), dispatches
-`arbench run` over ssh, tracks `manifest.json`, releases boxes as jobs finish,
-and is **resumable** (a job whose `run.json` exists is skipped).
-
-```bash
-arbench batch \
-  --adapter continual --benchmark mlebench_lite \
-  --tasks all-lite            # or a,b,c  or @file \
-  --seeds 3                   # independent repeats -> variance/error bars \
-  --arms baseline             # later: baseline,continual \
-  --max-boxes 8 \
-  --steps 8 --backend litellm --model Kimi-K2.6 \
-  --data-dir "$MLEBENCH_DATA_DIR" \
-  --venv  "$ROOT/.venv/bin/activate"   # shared-FS venv each box sources \
-  --repo-dir "$ROOT" \
-  --out runs/sweep-001
-```
-
-Each job lands in `runs/sweep-001/<arm>/<task>-seed<n>/run.json`. The scheduler
-caches box discovery (spares the ssh jump host) and kills+frees any job exceeding
-`--job-timeout`. For long sweeps, launch **detached on a lab box** so it survives
-your laptop disconnecting:
-
-```bash
-# on a lab box that can ssh siblings:
-scripts/run_sweep.sh baseline-v1 all-lite 3 8 8     # name tasks seeds max-boxes steps
-tail -f runs/baseline-v1/sweep.log
-```
-
-Re-running the same sweep name resumes it (done jobs skipped).
+The library imports and tests cleanly **without** mlebench installed — it's
+only needed to actually prepare/grade those tasks.
 
 ## Tests
 
 ```bash
-uv pip install -e ".[dev]"
-pytest                 # contract + backend tests use fakes, no heavy deps
+uv sync --extra dev
+uv run pytest       # grading + leakage tests use tiny staged fakes; no GPU, no net
 ```

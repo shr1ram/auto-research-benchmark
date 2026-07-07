@@ -24,7 +24,6 @@ from typing import Iterable
 from arbench.core.benchmark import Benchmark
 from arbench.core.task import Task
 from arbench.core.result import Score
-from arbench.core.registry import register_benchmark
 from arbench.benchmarks.openml_tabular.tasks import ALL_TASKS, SMALL_FIRST, BY_ID
 
 
@@ -157,5 +156,3 @@ class OpenMLTabular(Benchmark):
                      details={"metric": metric, "kind": meta.get("kind"),
                               "n_test": int(len(merged))})
 
-
-register_benchmark("openml_tabular", OpenMLTabular)

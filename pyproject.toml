@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "auto-research-benchmark"
-version = "0.1.0"
-description = "Benchmark harness with pluggable entry/exit adapters for arbitrary autoresearch systems. Benchmarks: MLE-Bench Lite, OpenML tabular."
+version = "0.2.0"
+description = "Benchmark tasks + held-out grading as a library (MLE-Bench Lite, OpenML tabular). Nothing here drives an agent."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
