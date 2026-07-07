@@ -172,6 +172,27 @@ def test_hung_job_is_timed_out(tmp_path, patched, monkeypatch):
     assert man["jobs"]["baseline/t1-seed0"]["status"] == "timeout"
 
 
+def test_persistent_dispatch_failure_fails_job_not_hangs(tmp_path, patched, monkeypatch):
+    """A job whose dispatch ALWAYS fails must be marked failed after
+    max_attempts dispatch tries — dispatch errors never bump `attempts`, so
+    without the give-up cap this loops forever (the old suite hang)."""
+    def always_fail(args, **kw):
+        raise OSError("simulated permanent ssh failure")
+    monkeypatch.setattr(sch, "_remote_run_cmd",
+                        lambda job, **kw: "true --workspace " + str(job.out_dir))
+    monkeypatch.setattr(sch.subprocess, "Popen", always_fail)
+
+    jobs = expand_worklist(tasks=["t1"], seeds=1, arms=["baseline"], adapter="aide",
+                           benchmark="b", sweep_dir=tmp_path, steps=1, backend="litellm", model=None)
+    summary = sch.run_batch(jobs, sweep_dir=tmp_path, max_boxes=1,
+                            venv_activate="x", repo_dir="x", data_dir="x",
+                            poll_s=0.01, discovery_interval_s=0.0, max_attempts=2,
+                            log=lambda *a: None)
+    assert summary["ok"] == 0
+    assert summary["failed"] == 1          # recorded as a job failure, not lost
+    assert bx.held_leases(tmp_path) == []  # no leaked lease
+
+
 def test_dispatch_failure_requeues_not_loses_job(tmp_path, patched, monkeypatch):
     """If Popen/mkdir fails for a box, the job must stay pending (not be lost)
     and the lease released — one bad box can't abort the sweep."""
