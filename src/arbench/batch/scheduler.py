@@ -130,12 +130,16 @@ def run_batch(
     _free_cache: list[str] = []
     _free_cache_ts: list[float] = [0.0]   # mutable holder for closure
     attempts: dict[str, int] = {}         # job.name -> times dispatched
+    dispatch_fails: dict[str, int] = {}   # job.name -> failed dispatch tries
 
     def _dispatch(job: Job, box: str) -> bool:
         """Dispatch job to box. Returns True on success. On failure (mkdir/open/
         Popen error) it does NOT raise — releases the lease, leaves the job for
         the caller to re-queue, so one bad box can't abort the whole sweep."""
         try:
+            # Dispatch owns its log file's parent dir — do not depend on the
+            # cmd builder having created it.
+            job.out_dir.mkdir(parents=True, exist_ok=True)
             cmd = _remote_run_cmd(job, venv_activate=venv_activate, repo_dir=repo_dir,
                                   data_dir=data_dir, env_exports=env_exports)
             # Close the parent's copy of the fd after Popen dups it into the child,
@@ -145,8 +149,23 @@ def run_batch(
                                         stdout=logf, stderr=subprocess.STDOUT)
         except Exception as e:
             boxmod.release(sweep_dir, box); self_held.discard(box)
-            manifest.update(job, status="dispatch_error", box=box, error=str(e)[:200])
-            log(f"[batch] xx {box}: {job.name} dispatch failed ({e}) — leaving pending")
+            dispatch_fails[job.name] = dispatch_fails.get(job.name, 0) + 1
+            if dispatch_fails[job.name] >= max_attempts:
+                # Persistent dispatch failure is a JOB failure, not a box blip —
+                # dispatch errors never bump `attempts`, so without this cap an
+                # undispatchable job (e.g. unwritable out_dir) spins the sweep
+                # forever.
+                manifest.update(job, status="failed", box=box,
+                                error=f"dispatch failed x{dispatch_fails[job.name]}: {str(e)[:160]}")
+                results.append({"job": job.name, "ok": False, "rc": None,
+                                "score": None, "status": "failed"})
+                if job in pending:
+                    pending.remove(job)
+                log(f"[batch] xx {box}: {job.name} dispatch failed ({e}) — "
+                    f"giving up after {dispatch_fails[job.name]} tries")
+            else:
+                manifest.update(job, status="dispatch_error", box=box, error=str(e)[:200])
+                log(f"[batch] xx {box}: {job.name} dispatch failed ({e}) — leaving pending")
             return False
         attempts[job.name] = attempts.get(job.name, 0) + 1
         running[box] = (job, proc, time.monotonic())

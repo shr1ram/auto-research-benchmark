@@ -23,10 +23,11 @@ TASK = "wine_quality"
 
 
 def _stage_openml(root, legacy_answers: bool = False):
-    """Fake a prepared openml task in the firewalled layout."""
-    prep = root / TASK / "prepared"
+    """Fake a prepared openml task in the split public/private layout
+    (answers in a separate private tree — see the 2026-07-07 firewall split)."""
+    prep = root / "public" / TASK / "prepared"
     prep.mkdir(parents=True)
-    priv = root / TASK / "private"
+    priv = root / "private" / TASK
     priv.mkdir(parents=True)
     meta = {"task_id": TASK, "dataset_id": 0, "metric": "accuracy",
             "higher_better": True, "kind": "multiclass", "target": "label",
@@ -47,7 +48,8 @@ def _stage_openml(root, legacy_answers: bool = False):
 
 def test_openml_answers_outside_agent_dir(tmp_path):
     prep, priv = _stage_openml(tmp_path)
-    bench = OpenMLTabular(data_dir=str(tmp_path))
+    bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
+                          private_data_dir=str(tmp_path / "private"))
     task = bench.load_task(TASK)
     # the agent-visible tree contains no answers file anywhere
     assert task.data_dir == prep
@@ -60,7 +62,8 @@ def test_openml_answers_outside_agent_dir(tmp_path):
 
 def test_openml_grades_from_private_answers(tmp_path):
     _stage_openml(tmp_path)
-    bench = OpenMLTabular(data_dir=str(tmp_path))
+    bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
+                          private_data_dir=str(tmp_path / "private"))
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.csv"
     pd.DataFrame({"row_id": [3, 4, 5], "prediction": ["a", "b", "b"]}).to_csv(sub, index=False)
@@ -73,7 +76,8 @@ def test_openml_grades_from_private_answers(tmp_path):
 
 def test_openml_refuses_legacy_leaky_layout(tmp_path):
     _stage_openml(tmp_path, legacy_answers=True)
-    bench = OpenMLTabular(data_dir=str(tmp_path))
+    bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
+                          private_data_dir=str(tmp_path / "private"))
     with pytest.raises(RuntimeError, match="FIREWALL"):
         bench.load_task(TASK)
 
