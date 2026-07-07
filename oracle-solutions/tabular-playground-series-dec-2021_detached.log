@@ -1,2 +1,0 @@
-GRADED 0.94727
-ORACLE_RESULT {"task": "tabular-playground-series-dec-2021", "ran": true, "exit_code": 0, "wall_clock_s": 19, "submission_written": true, "peak_gpu_mib": 30, "max_gpu_util": 0, "score": 0.94727, "valid": true, "median": 0.95342, "gold": 0.9566, "above_median": false, "any_medal": false, "grade_error": null}

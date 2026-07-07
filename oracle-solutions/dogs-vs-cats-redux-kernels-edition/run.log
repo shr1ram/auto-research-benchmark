@@ -1,6 +1,0 @@
-device cuda subsample 5000 epochs 3
-train files 5000 cats 2500 dogs 2500
-epoch 0 loss 0.2787 t 3s
-epoch 1 loss 0.1224 t 5s
-epoch 2 loss 0.0571 t 6s
-wrote submission.csv 2500 rows; total 8s

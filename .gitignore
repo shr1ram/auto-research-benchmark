@@ -36,3 +36,5 @@ dl_*.log
 .pytest_cache/
 .uv-cache/
 .DS_Store
+cache/
+oracle-solutions/
