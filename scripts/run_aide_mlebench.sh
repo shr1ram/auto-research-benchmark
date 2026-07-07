@@ -10,8 +10,8 @@ set -euo pipefail
 COMP="${1:-random-acts-of-pizza}"
 STEPS="${2:-10}"
 PROJ="${PROJECT_FS:-/cs/student/project_msc/2025/csml/sruppage/thesis}"
-export MLEBENCH_DATA_DIR="${MLEBENCH_DATA_DIR:-$PROJ/mlebench-data}"
-export MLEBENCH_PRIVATE_DATA_DIR="${MLEBENCH_PRIVATE_DATA_DIR:-$PROJ/mlebench-data-private}"  # grader-only split
+export MLEBENCH_DATA_DIR="${MLEBENCH_DATA_DIR:-$PROJ/auto-research-benchmark/data/mlebench/public}"
+export MLEBENCH_PRIVATE_DATA_DIR="${MLEBENCH_PRIVATE_DATA_DIR:-$PROJ/auto-research-benchmark/data/mlebench/private}"  # grader-only split
 export XDG_CACHE_HOME="$PROJ/.cache"
 
 WS="$PROJ/auto-research-benchmark/runs/${COMP}-$(date +%Y%m%d-%H%M%S)"

@@ -13,7 +13,7 @@ COMP="${1:-random-acts-of-pizza}"
 PROJ="${PROJECT_FS:-/cs/student/project_msc/2025/csml/sruppage/thesis}"
 ROOT="$PROJ/auto-research-benchmark"
 MLE_SRC="$ROOT/mle-bench"
-export MLEBENCH_DATA_DIR="${MLEBENCH_DATA_DIR:-$PROJ/mlebench-data}"
+export MLEBENCH_DATA_DIR="${MLEBENCH_DATA_DIR:-$PROJ/auto-research-benchmark/data/mlebench/public}"
 # Keep the appdirs cache off NFS home too.
 export XDG_CACHE_HOME="$PROJ/.cache"
 

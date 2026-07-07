@@ -20,8 +20,8 @@ SEEDS="${3:-1}"
 MAXBOXES="${4:-4}"
 STEPS="${5:-8}"
 
-export MLEBENCH_DATA_DIR="$PROJ/mlebench-data"
-export MLEBENCH_PRIVATE_DATA_DIR="$PROJ/mlebench-data-private"  # grader-only split, firewalled from agents
+export MLEBENCH_DATA_DIR="$PROJ/auto-research-benchmark/data/mlebench/public"
+export MLEBENCH_PRIVATE_DATA_DIR="$PROJ/auto-research-benchmark/data/mlebench/private"  # grader-only split, firewalled from agents
 export XDG_CACHE_HOME="$PROJ/.cache"
 export KAGGLE_CONFIG_DIR="$HOME/.kaggle"
 KEY="$(grep -E '^CUSTOM_API_KEY=' "$DEV/env-profiles/llm.api.env" | cut -d= -f2-)"
@@ -31,8 +31,8 @@ ENVX="export CUSTOM_API_KEY=$KEY; \
 export OPENAI_BASE_URL=https://litellm.yangtzeailab.com/v1; export OPENAI_API_KEY=$KEY; \
 export OPENAI_REQUEST_TIMEOUT=150 OPENAI_MAX_RETRIES=4; \
 export ARBENCH_LLM_BACKEND=litellm ARBENCH_LLM_MODEL=Kimi-K2.6; \
-export MLEBENCH_DATA_DIR=$PROJ/mlebench-data; \
-export MLEBENCH_PRIVATE_DATA_DIR=$PROJ/mlebench-data-private; \
+export MLEBENCH_DATA_DIR=$PROJ/auto-research-benchmark/data/mlebench/public; \
+export MLEBENCH_PRIVATE_DATA_DIR=$PROJ/auto-research-benchmark/data/mlebench/private; \
 export XDG_CACHE_HOME=$PROJ/.cache; \
 export KAGGLE_CONFIG_DIR=\$HOME/.kaggle; export AIDE_REPO=$ROOT/aideml;"
 
@@ -46,7 +46,7 @@ setsid arbench batch \
   --tasks "$TASKS" --seeds "$SEEDS" --arms baseline \
   --out "$SWEEP" --max-boxes "$MAXBOXES" --steps "$STEPS" \
   --backend litellm --model Kimi-K2.6 \
-  --data-dir "$PROJ/mlebench-data" \
+  --data-dir "$PROJ/auto-research-benchmark/data/mlebench/public" \
   --venv "$ROOT/.venv/bin/activate" \
   --repo-dir "$ROOT" \
   --env-export "$ENVX" \
