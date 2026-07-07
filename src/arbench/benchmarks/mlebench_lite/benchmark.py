@@ -45,7 +45,7 @@ def _require_mlebench():
     except Exception as e:  # pragma: no cover - depends on box install
         raise RuntimeError(
             "mlebench is not importable. Install it on the run box:\n"
-            "  uv pip install -e /path/to/mle-bench\n"
+            "  uv sync --extra mlebench   (vendor/mle-bench)\n"
             f"(underlying import error: {e})"
         ) from e
 

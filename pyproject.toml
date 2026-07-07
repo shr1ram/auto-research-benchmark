@@ -7,7 +7,7 @@ name = "auto-research-benchmark"
 version = "0.1.0"
 description = "Benchmark harness with pluggable entry/exit adapters for arbitrary autoresearch systems. Benchmarks: MLE-Bench Lite, OpenML tabular."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Shriram" }]
 dependencies = [
@@ -20,12 +20,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Pulled in only when actually running the MLE-bench benchmark on a box.
-mlebench = []
+# Pulled in only when actually running the MLE-bench benchmark on a box:
+#   uv sync --extra mlebench   (editable path dep on vendor/mle-bench, see
+#   [tool.uv.sources]; the checkout itself is gitignored — vendor/README.md)
+mlebench = ["mlebench"]
 dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
 
 [project.scripts]
 arbench = "arbench.cli:main"
+
+[tool.uv.sources]
+mlebench = { path = "vendor/mle-bench", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

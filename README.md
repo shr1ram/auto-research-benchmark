@@ -70,7 +70,7 @@ arbench run \
 
 `mlebench_lite` wraps `openai/mle-bench`, so on the run box you need:
 
-1. `uv pip install -e /path/to/mle-bench`
+1. `uv sync --extra mlebench`  (editable dep on `vendor/mle-bench`)
 2. Kaggle API creds at `~/.kaggle/kaggle.json`, **and** to accept each
    competition's rules on kaggle.com.
 3. Prepared data: `mlebench prepare -c <competition>` (point its cache at the
