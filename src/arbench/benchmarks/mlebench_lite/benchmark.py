@@ -34,6 +34,7 @@ from arbench.core.benchmark import Benchmark
 from arbench.core.task import Task
 from arbench.core.result import Score
 from arbench.core.data_version import compute_data_version, verify_data_version
+from arbench.core.splits import split_of
 from arbench.benchmarks.mlebench_lite.tasks import LITE_COMPETITIONS, SMALL_FIRST
 
 
@@ -132,6 +133,7 @@ class MLEBenchLite(Benchmark):
                 "sample_submission": str(comp.sample_submission),
                 "is_lower_better": bool(getattr(comp.grader, "is_lower_better", False)),
                 "data_version": data_version,
+                "split": split_of(self.name, task_id),
             },
         )
 

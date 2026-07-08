@@ -41,6 +41,20 @@ def tasks_cmd(benchmark_name, data_dir):
         click.echo(task_id)
 
 
+@main.command("splits")
+@click.option("--bin", "bin_name", default=None,
+              help="show one bin only (e.g. near, far_vision)")
+def splits_cmd(bin_name):
+    """The distance index: bin -> tasks (benchmark-relational by design)."""
+    from arbench.core.splits import BINS, split_index
+    index = split_index()
+    for name in ([bin_name] if bin_name else BINS):
+        entries = index.get(name, [])
+        click.echo(f"{name} ({len(entries)}):")
+        for benchmark, task_id in entries:
+            click.echo(f"  {benchmark:16s} {task_id}")
+
+
 @main.command("grade")
 @click.option("--benchmark", "benchmark_name", required=True,
               type=click.Choice(arbench.BENCHMARK_NAMES))

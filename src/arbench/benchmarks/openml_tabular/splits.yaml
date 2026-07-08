@@ -1,0 +1,29 @@
+# Task splits for openml_tabular — the IN-DOMAIN benchmark (distance ladder
+# L0/L1). Distance is benchmark-relational by design (2026-07-08 decision):
+# no semantic task families — the source/eval assignment below is a SEEDED
+# RANDOM split (random.Random(0), stratified so eval contains both
+# classification and regression), generated once and frozen here.
+#
+# bins:
+#   in_domain_source  memory-source tasks: their traces build the banks
+#   in_domain_eval    held-out eval tasks of the SAME benchmark
+#   control           measured-saturated at baseline (heldout 0.9997 on the
+#                     2026-07-08 gates sweep) — a memory effect cannot show;
+#                     keep as a null-effect check, exclude from readouts
+benchmark: openml_tabular
+splits:
+  MagicTelescope:  {modality: tabular, bin: in_domain_source, kind: classification}
+  MiniBooNE:       {modality: tabular, bin: in_domain_source, kind: classification,
+                    note: "near-ceiling at baseline (0.985) — check vs oracle before trusting effect sizes"}
+  bank-marketing:  {modality: tabular, bin: in_domain_source, kind: classification}
+  cpu_activity:    {modality: tabular, bin: in_domain_source, kind: regression}
+  credit:          {modality: tabular, bin: in_domain_source, kind: classification}
+  electricity:     {modality: tabular, bin: in_domain_source, kind: classification,
+                    note: "temporal data; random-CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
+  wine_quality:    {modality: tabular, bin: in_domain_source, kind: regression}
+  covertype:       {modality: tabular, bin: in_domain_eval, kind: classification,
+                    note: "near-ceiling at baseline (0.970)"}
+  house_16H:       {modality: tabular, bin: in_domain_eval, kind: classification}
+  superconduct:    {modality: tabular, bin: in_domain_eval, kind: regression}
+  pol:             {modality: tabular, bin: control, kind: classification,
+                    note: "saturated: baseline heldout 0.9997 (gates 2026-07-08)"}

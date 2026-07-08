@@ -1,0 +1,49 @@
+# Task splits for mlebench_lite — the TRANSFER benchmark (distance ladder
+# L2/L3). Distance is benchmark-relational: bins are defined by MODALITY
+# (a checkable fact), never by semantic task families.
+#
+# bins:
+#   near        different benchmark, SAME modality as the in-domain spine
+#               (tabular): benchmark shift without modality shift. Caveat,
+#               stated not hidden: this bundles Kaggle-format presentation
+#               shift with the benchmark shift.
+#   far_vision  different benchmark AND modality (GPU via BrokerRunner)
+#   far_text    different benchmark AND modality (mostly CPU) — a second far
+#               bin that separates modality shift from benchmark shift
+#   excluded    not usable (unobtainable / awkward singleton), with reasons
+benchmark: mlebench_lite
+splits:
+  tabular-playground-series-dec-2021:  {modality: tabular, bin: near}
+  tabular-playground-series-may-2022:  {modality: tabular, bin: near}
+  nomad2018-predict-transparent-conductors: {modality: tabular, bin: near}
+  leaf-classification: {modality: tabular, bin: near,
+                        note: "borderline: pre-extracted numeric shape features (tabular in practice, image-derived in origin)"}
+
+  aerial-cactus-identification:        {modality: vision, bin: far_vision}
+  aptos2019-blindness-detection:       {modality: vision, bin: far_vision}
+  dog-breed-identification:            {modality: vision, bin: far_vision}
+  dogs-vs-cats-redux-kernels-edition:  {modality: vision, bin: far_vision}
+  histopathologic-cancer-detection:    {modality: vision, bin: far_vision,
+                                        note: "~220k tiny files — the inode hog"}
+  plant-pathology-2020-fgvc7:          {modality: vision, bin: far_vision}
+  ranzcr-clip-catheter-line-classification: {modality: vision, bin: far_vision}
+  siim-isic-melanoma-classification:   {modality: vision, bin: far_vision,
+                                        note: "190GB — the disk hog"}
+  denoising-dirty-documents:           {modality: vision, bin: far_vision,
+                                        note: "image-to-image output — unusually far even within vision"}
+
+  random-acts-of-pizza:                {modality: text, bin: far_text}
+  spooky-author-identification:        {modality: text, bin: far_text}
+  jigsaw-toxic-comment-classification-challenge: {modality: text, bin: far_text}
+  us-patent-phrase-to-phrase-matching: {modality: text, bin: far_text}
+  text-normalization-challenge-english-language: {modality: text, bin: far_text,
+                                        note: "seq2seq — may fail the agent-runs gate"}
+  text-normalization-challenge-russian-language: {modality: text, bin: far_text,
+                                        note: "seq2seq — may fail the agent-runs gate"}
+
+  mlsp-2013-birds:                     {modality: audio, bin: excluded,
+                                        note: "audio singleton — no bin to belong to"}
+  detecting-insults-in-social-commentary: {modality: text, bin: excluded,
+                                        note: "permanently Kaggle-closed; data unobtainable"}
+  the-icml-2013-whale-challenge-right-whale-redux: {modality: audio, bin: excluded,
+                                        note: "permanently Kaggle-closed; data unobtainable"}
