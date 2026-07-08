@@ -21,11 +21,12 @@ echo ">> project FS:        $PROJ"
 echo ">> mlebench data dir: $MLEBENCH_DATA_DIR"
 mkdir -p "$MLEBENCH_DATA_DIR"
 
-# 1. clone + install mle-bench (idempotent)
+# 1. clone + install mle-bench (idempotent; the editable install is the
+#    pyproject's `mlebench` extra — see vendor/README.md for the pin)
 if [ ! -d "$MLE_SRC/.git" ]; then
   git clone https://github.com/openai/mle-bench.git "$MLE_SRC"
 fi
-uv pip install -e "$MLE_SRC"
+(cd "$ROOT" && uv sync --extra mlebench)
 
 # 2. prepare one competition into the data dir
 echo ">> preparing competition: $COMP"

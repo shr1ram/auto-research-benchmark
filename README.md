@@ -33,8 +33,10 @@ arbench/
 ```
 
 A benchmark plugs in by implementing three methods (`list_tasks`, `load_task`,
-`grade`). Library surface: `arbench.get_benchmark(name)` (lazy imports — the
-package works on a bare machine).
+`grade`) plus a `splits.yaml` (family + exclusions; roles are computed from
+fractions, never stored). Library surface: `arbench.get_benchmark(name)`,
+`assign_roles/tasks_with_role/families/split_of` (lazy imports — the package
+works on a bare machine).
 
 ## Data layout + firewall
 
@@ -61,6 +63,7 @@ uv sync --extra mlebench                               # + vendor/mle-bench, run
 
 arbench tasks --benchmark openml_tabular
 arbench grade --benchmark openml_tabular --task wine_quality submission.csv
+arbench splits --fractions bank=0.5,val=0.2,test=0.3 --seed 0   # the role draw
 ```
 
 ```python

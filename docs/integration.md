@@ -24,8 +24,10 @@ Implement `Benchmark`:
 - `grade(task, submission_path)` → a `Score` (return `Score.invalid(...)`, never
   raise, on missing/malformed submissions).
 
-Add its lazy-import branch to `arbench.get_benchmark` and its public/private
-roots under `data/<name>/{public,private}`.
+Add its lazy-import branch to `arbench.get_benchmark`, its public/private
+roots under `data/<name>/{public,private}`, and a `splits.yaml` giving every
+task a family (+ exclusions with reasons) — roles are computed from
+fractions, never stored.
 
 ## MLE-Bench Lite specifics
 
