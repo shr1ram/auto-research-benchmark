@@ -20,7 +20,12 @@ from typing import Any, Optional
 
 import yaml
 
-BINS = ("in_domain_source", "in_domain_eval", "control",
+#: `unassigned` is the shipped state: every task stays {modality, bin} =
+#: unassigned until the human explicitly signs the assignment off. Nothing
+#: can run on it — `split:` config refs resolve to an empty task list, which
+#: configs refuse.
+BINS = ("unassigned",
+        "in_domain_source", "in_domain_eval", "control",
         "near", "far_vision", "far_text", "excluded")
 
 

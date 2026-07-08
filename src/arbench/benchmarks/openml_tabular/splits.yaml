@@ -1,29 +1,29 @@
 # Task splits for openml_tabular — the IN-DOMAIN benchmark (distance ladder
-# L0/L1). Distance is benchmark-relational by design (2026-07-08 decision):
-# no semantic task families — the source/eval assignment below is a SEEDED
-# RANDOM split (random.Random(0), stratified so eval contains both
-# classification and regression), generated once and frozen here.
+# L0/L1). Distance is benchmark-relational by design (2026-07-08): no semantic
+# task families.
 #
-# bins:
+# EVERY assignment is `unassigned` until the human explicitly signs off —
+# nothing runs on an unassigned bin (split: refs resolve empty and configs
+# refuse empty task lists). The 2026-07-08 PROPOSAL is in the per-line
+# comments: in_domain source/eval is a seeded random 7/3 draw
+# (random.Random(0), stratified so eval holds both classification and
+# regression); pol is proposed as control on measured saturation (baseline
+# heldout 0.9997, gates sweep 2026-07-08).
+#
+# bins (once assigned):
 #   in_domain_source  memory-source tasks: their traces build the banks
 #   in_domain_eval    held-out eval tasks of the SAME benchmark
-#   control           measured-saturated at baseline (heldout 0.9997 on the
-#                     2026-07-08 gates sweep) — a memory effect cannot show;
-#                     keep as a null-effect check, exclude from readouts
+#   control           measured-saturated at baseline; null-effect check only
 benchmark: openml_tabular
 splits:
-  MagicTelescope:  {modality: tabular, bin: in_domain_source, kind: classification}
-  MiniBooNE:       {modality: tabular, bin: in_domain_source, kind: classification,
-                    note: "near-ceiling at baseline (0.985) — check vs oracle before trusting effect sizes"}
-  bank-marketing:  {modality: tabular, bin: in_domain_source, kind: classification}
-  cpu_activity:    {modality: tabular, bin: in_domain_source, kind: regression}
-  credit:          {modality: tabular, bin: in_domain_source, kind: classification}
-  electricity:     {modality: tabular, bin: in_domain_source, kind: classification,
-                    note: "temporal data; random-CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
-  wine_quality:    {modality: tabular, bin: in_domain_source, kind: regression}
-  covertype:       {modality: tabular, bin: in_domain_eval, kind: classification,
-                    note: "near-ceiling at baseline (0.970)"}
-  house_16H:       {modality: tabular, bin: in_domain_eval, kind: classification}
-  superconduct:    {modality: tabular, bin: in_domain_eval, kind: regression}
-  pol:             {modality: tabular, bin: control, kind: classification,
-                    note: "saturated: baseline heldout 0.9997 (gates 2026-07-08)"}
+  MagicTelescope:  {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
+  MiniBooNE:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification; near-ceiling 0.985 — check vs oracle)
+  bank-marketing:  {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
+  cpu_activity:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (regression)
+  credit:          {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
+  electricity:     {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification; temporal — random CV leaks: proxy 0.996 vs heldout 0.879)
+  wine_quality:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (regression)
+  covertype:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (classification; near-ceiling 0.970)
+  house_16H:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (classification)
+  superconduct:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (regression)
+  pol:             {modality: unassigned, bin: unassigned}  # proposed: tabular / control (saturated: baseline heldout 0.9997)
