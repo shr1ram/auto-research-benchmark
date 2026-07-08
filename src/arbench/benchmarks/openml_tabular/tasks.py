@@ -19,8 +19,6 @@ metric-relative headroom threshold is built to handle.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 @dataclass(frozen=True)
 class OpenMLTaskSpec:
@@ -31,8 +29,6 @@ class OpenMLTaskSpec:
     higher_better: bool
     kind: str               # 'binary' | 'multiclass' | 'regression'
     note: str = ""          # short human hint
-    # optional override if OpenML's default target col name differs; else use `target`
-    positive_label: Optional[str] = None
 
 
 # --- Grinsztajn "numerical classification" (difficulty-curated, high-headroom) ---
