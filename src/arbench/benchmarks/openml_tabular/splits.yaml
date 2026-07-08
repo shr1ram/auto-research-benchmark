@@ -1,29 +1,28 @@
-# Task splits for openml_tabular — the IN-DOMAIN benchmark (distance ladder
-# L0/L1). Distance is benchmark-relational by design (2026-07-08): no semantic
-# task families.
+# Split metadata for openml_tabular (benchmark plan §2).
 #
-# EVERY assignment is `unassigned` until the human explicitly signs off —
-# nothing runs on an unassigned bin (split: refs resolve empty and configs
-# refuse empty task lists). The 2026-07-08 PROPOSAL is in the per-line
-# comments: in_domain source/eval is a seeded random 7/3 draw
-# (random.Random(0), stratified so eval holds both classification and
-# regression); pol is proposed as control on measured saturation (baseline
-# heldout 0.9997, gates sweep 2026-07-08).
+# This file records ONLY checkable facts: each task's FAMILY (benchmark ×
+# modality — the stratification unit) and exclusions with reasons. Role
+# assignment (bank / train / val / test) is NEVER stored here: it is computed
+# deterministically by arbench.assign_roles(fractions, seed) from the
+# human-defined percentages — the fractions live in the experiment config
+# (a hashed confound), so no run can happen before the human sets them.
 #
-# bins (once assigned):
-#   in_domain_source  memory-source tasks: their traces build the banks
-#   in_domain_eval    held-out eval tasks of the SAME benchmark
-#   control           measured-saturated at baseline; null-effect check only
+# Notes are measured observations from the 2026-07-08 gates sweep, recorded
+# for analysis; they do not affect the draw.
 benchmark: openml_tabular
-splits:
-  MagicTelescope:  {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
-  MiniBooNE:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification; near-ceiling 0.985 — check vs oracle)
-  bank-marketing:  {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
-  cpu_activity:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (regression)
-  credit:          {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification)
-  electricity:     {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (classification; temporal — random CV leaks: proxy 0.996 vs heldout 0.879)
-  wine_quality:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_source (regression)
-  covertype:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (classification; near-ceiling 0.970)
-  house_16H:       {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (classification)
-  superconduct:    {modality: unassigned, bin: unassigned}  # proposed: tabular / in_domain_eval (regression)
-  pol:             {modality: unassigned, bin: unassigned}  # proposed: tabular / control (saturated: baseline heldout 0.9997)
+tasks:
+  MagicTelescope:  {family: openml_tabular, kind: classification}
+  MiniBooNE:       {family: openml_tabular, kind: classification,
+                    note: "near-ceiling at baseline (0.985) — check vs oracle"}
+  bank-marketing:  {family: openml_tabular, kind: classification}
+  cpu_activity:    {family: openml_tabular, kind: regression}
+  credit:          {family: openml_tabular, kind: classification}
+  electricity:     {family: openml_tabular, kind: classification,
+                    note: "temporal; random CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
+  wine_quality:    {family: openml_tabular, kind: regression}
+  covertype:       {family: openml_tabular, kind: classification,
+                    note: "near-ceiling at baseline (0.970)"}
+  house_16H:       {family: openml_tabular, kind: classification}
+  superconduct:    {family: openml_tabular, kind: regression}
+  pol:             {family: openml_tabular, kind: classification,
+                    note: "SATURATED at baseline (heldout 0.9997, gates 2026-07-08) — in the draw, but exclude from effect readouts"}

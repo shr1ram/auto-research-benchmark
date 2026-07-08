@@ -42,17 +42,31 @@ def tasks_cmd(benchmark_name, data_dir):
 
 
 @main.command("splits")
-@click.option("--bin", "bin_name", default=None,
-              help="show one bin only (e.g. near, far_vision)")
-def splits_cmd(bin_name):
-    """The distance index: bin -> tasks (benchmark-relational by design)."""
-    from arbench.core.splits import BINS, split_index
-    index = split_index()
-    for name in ([bin_name] if bin_name else BINS):
-        entries = index.get(name, [])
-        click.echo(f"{name} ({len(entries)}):")
-        for benchmark, task_id in entries:
-            click.echo(f"  {benchmark:16s} {task_id}")
+@click.option("--fractions", default=None,
+              help="bank=0.4,train=0.2,val=0.2,test=0.2 -> show the assignment")
+@click.option("--seed", default=0, type=int, help="draw seed (default 0)")
+def splits_cmd(fractions, seed):
+    """The split index: families (facts) and, given fractions, the automatic
+    seeded role assignment (bank/train/val/test, stratified per family)."""
+    from arbench.core.splits import assign_roles, families, load_split_meta
+    fams = families()
+    if not fractions:
+        for fam, members in fams.items():
+            click.echo(f"{fam} ({len(members)}):")
+            for benchmark, task_id in members:
+                click.echo(f"  {task_id}")
+        for b in ("openml_tabular", "mlebench_lite"):
+            for task_id, e in load_split_meta(b).items():
+                if e.get("excluded"):
+                    click.echo(f"excluded: {task_id} — {e['excluded']}")
+        click.echo("(pass --fractions to see the role assignment)")
+        return
+    fr = {k: float(v) for k, v in (kv.split("=") for kv in fractions.split(","))}
+    assignment = assign_roles(fr, seed)
+    for fam, members in fams.items():
+        click.echo(f"{fam}:")
+        for key in members:
+            click.echo(f"  {assignment[key]:5s} {key[1]}")
 
 
 @main.command("grade")

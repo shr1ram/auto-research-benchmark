@@ -1,43 +1,43 @@
-# Task splits for mlebench_lite — the TRANSFER benchmark (distance ladder
-# L2/L3). Distance is benchmark-relational: bins are defined by MODALITY,
-# never by semantic task families.
+# Split metadata for mlebench_lite (benchmark plan §2).
 #
-# EVERY assignment is `unassigned` until the human explicitly signs off —
-# nothing runs on an unassigned bin (split: refs resolve empty and configs
-# refuse empty task lists). The 2026-07-08 PROPOSAL is in the per-line
-# comments.
+# ONLY checkable facts: FAMILY (benchmark × modality) and exclusions with
+# reasons. Roles (bank / train / val / test) are computed by
+# arbench.assign_roles(fractions, seed) from human-defined percentages,
+# stratified per family — never stored here.
 #
-# bins (once assigned):
-#   near        different benchmark, SAME modality as the in-domain spine
-#               (caveat, stated not hidden: bundles Kaggle-format presentation
-#               shift with the benchmark shift)
-#   far_vision  different benchmark AND modality (GPU via BrokerRunner)
-#   far_text    different benchmark AND modality (mostly CPU)
-#   excluded    not usable (unobtainable / awkward singleton), with reasons
+# Distance stays benchmark-relational: openml_tabular is the in-domain spine;
+# mlebench_tabular = same modality / different benchmark (near);
+# mlebench_vision & mlebench_text = modality shift on top (far).
 benchmark: mlebench_lite
-splits:
-  tabular-playground-series-dec-2021:  {modality: unassigned, bin: unassigned}  # proposed: tabular / near
-  tabular-playground-series-may-2022:  {modality: unassigned, bin: unassigned}  # proposed: tabular / near
-  nomad2018-predict-transparent-conductors: {modality: unassigned, bin: unassigned}  # proposed: tabular / near
-  leaf-classification: {modality: unassigned, bin: unassigned}  # proposed: tabular / near (BORDERLINE: pre-extracted numeric shape features, image-derived in origin)
+tasks:
+  tabular-playground-series-dec-2021:  {family: mlebench_tabular}
+  tabular-playground-series-may-2022:  {family: mlebench_tabular}
+  nomad2018-predict-transparent-conductors: {family: mlebench_tabular}
+  leaf-classification: {family: mlebench_tabular,
+                        note: "borderline: pre-extracted numeric shape features (tabular in practice, image-derived in origin)"}
 
-  aerial-cactus-identification:        {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  aptos2019-blindness-detection:       {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  dog-breed-identification:            {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  dogs-vs-cats-redux-kernels-edition:  {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  histopathologic-cancer-detection:    {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision (~220k tiny files — inode hog)
-  plant-pathology-2020-fgvc7:          {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  ranzcr-clip-catheter-line-classification: {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision
-  siim-isic-melanoma-classification:   {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision (190GB — disk hog)
-  denoising-dirty-documents:           {modality: unassigned, bin: unassigned}  # proposed: vision / far_vision (image-to-image — unusually far even within vision)
+  aerial-cactus-identification:        {family: mlebench_vision}
+  aptos2019-blindness-detection:       {family: mlebench_vision}
+  dog-breed-identification:            {family: mlebench_vision}
+  dogs-vs-cats-redux-kernels-edition:  {family: mlebench_vision}
+  histopathologic-cancer-detection:    {family: mlebench_vision,
+                                        note: "~220k tiny files — the inode hog"}
+  plant-pathology-2020-fgvc7:          {family: mlebench_vision}
+  ranzcr-clip-catheter-line-classification: {family: mlebench_vision}
+  siim-isic-melanoma-classification:   {family: mlebench_vision,
+                                        note: "190GB — the disk hog"}
+  denoising-dirty-documents:           {family: mlebench_vision,
+                                        note: "image-to-image output — unusually far even within vision"}
 
-  random-acts-of-pizza:                {modality: unassigned, bin: unassigned}  # proposed: text / far_text
-  spooky-author-identification:        {modality: unassigned, bin: unassigned}  # proposed: text / far_text
-  jigsaw-toxic-comment-classification-challenge: {modality: unassigned, bin: unassigned}  # proposed: text / far_text
-  us-patent-phrase-to-phrase-matching: {modality: unassigned, bin: unassigned}  # proposed: text / far_text
-  text-normalization-challenge-english-language: {modality: unassigned, bin: unassigned}  # proposed: text / far_text (seq2seq — may fail the agent-runs gate)
-  text-normalization-challenge-russian-language: {modality: unassigned, bin: unassigned}  # proposed: text / far_text (seq2seq — may fail the agent-runs gate)
+  random-acts-of-pizza:                {family: mlebench_text}
+  spooky-author-identification:        {family: mlebench_text}
+  jigsaw-toxic-comment-classification-challenge: {family: mlebench_text}
+  us-patent-phrase-to-phrase-matching: {family: mlebench_text}
+  text-normalization-challenge-english-language: {family: mlebench_text,
+                                        note: "seq2seq — may fail the agent-runs gate"}
+  text-normalization-challenge-russian-language: {family: mlebench_text,
+                                        note: "seq2seq — may fail the agent-runs gate"}
 
-  mlsp-2013-birds:                     {modality: unassigned, bin: unassigned}  # proposed: audio / excluded (audio singleton — no bin to belong to)
-  detecting-insults-in-social-commentary: {modality: unassigned, bin: unassigned}  # proposed: text / excluded (permanently Kaggle-closed; unobtainable)
-  the-icml-2013-whale-challenge-right-whale-redux: {modality: unassigned, bin: unassigned}  # proposed: audio / excluded (permanently Kaggle-closed; unobtainable)
+  mlsp-2013-birds:                     {family: mlebench_audio, excluded: "audio singleton — a one-task family cannot be split"}
+  detecting-insults-in-social-commentary: {family: mlebench_text, excluded: "permanently Kaggle-closed; data unobtainable"}
+  the-icml-2013-whale-challenge-right-whale-redux: {family: mlebench_audio, excluded: "permanently Kaggle-closed; data unobtainable"}

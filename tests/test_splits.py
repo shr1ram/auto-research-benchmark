@@ -1,6 +1,4 @@
-"""Splits index: mechanics always tested; design invariants arm themselves
-the moment the human signs off assignments (until then everything ships
-`unassigned` and the invariant tests skip)."""
+"""Automatic splits: facts in the yaml, roles computed from fractions."""
 from __future__ import annotations
 
 import pytest
@@ -9,58 +7,86 @@ from click.testing import CliRunner
 from arbench.benchmarks.mlebench_lite.tasks import LITE_COMPETITIONS
 from arbench.benchmarks.openml_tabular.tasks import BY_ID
 from arbench.cli import main
-from arbench.core.splits import load_splits, split_index, split_of, tasks_in
+from arbench.core.splits import (
+    ROLES, assign_roles, families, load_split_meta, split_of, tasks_with_role,
+)
+
+FR = {"bank": 0.4, "train": 0.2, "val": 0.2, "test": 0.2}
 
 
-def _all_unassigned() -> bool:
-    return not any(e["bin"] != "unassigned"
-                   for b in ("openml_tabular", "mlebench_lite")
-                   for e in load_splits(b).values())
-
-assigned = pytest.mark.skipif(
-    _all_unassigned(), reason="split assignments await explicit human sign-off")
+def test_every_task_is_listed_with_a_family():
+    assert set(load_split_meta("openml_tabular")) == set(BY_ID)
+    assert set(load_split_meta("mlebench_lite")) == set(LITE_COMPETITIONS)
 
 
-# ------------------------------------------------------ mechanics (always)
-
-def test_every_openml_task_is_listed():
-    assert set(load_splits("openml_tabular")) == set(BY_ID)
-
-
-def test_every_lite_competition_is_listed():
-    assert set(load_splits("mlebench_lite")) == set(LITE_COMPETITIONS)
-
-
-def test_index_covers_everything_once():
-    index = split_index()
-    flat = [t for entries in index.values() for t in entries]
-    assert len(flat) == len(set(flat)) == len(BY_ID) + len(LITE_COMPETITIONS)
+def test_families_exclude_the_excluded_with_reasons():
+    fams = families()
+    flat = {t for members in fams.values() for t in members}
+    meta = load_split_meta("mlebench_lite")
+    for task_id, entry in meta.items():
+        if entry.get("excluded"):
+            assert ("mlebench_lite", task_id) not in flat
+            assert entry["excluded"]              # reason is mandatory
+        else:
+            assert ("mlebench_lite", task_id) in flat
+    assert "mlebench_audio" not in fams           # both members excluded
 
 
-def test_split_of_and_unknown_bin():
-    assert split_of("openml_tabular", "wine_quality") is not None
+def test_assignment_is_deterministic_and_complete():
+    a = assign_roles(FR, seed=0)
+    b = assign_roles(FR, seed=0)
+    assert a == b                                  # pure in (fractions, seed)
+    assert set(a.values()) <= set(ROLES)
+    flat = {t for members in families().values() for t in members}
+    assert set(a) == flat                          # every drawable task, once
+    assert assign_roles(FR, seed=1) != a           # seed moves the draw
+
+
+def test_stratified_largest_remainder_counts():
+    a = assign_roles(FR, seed=0)
+    for fam, members in families().items():
+        n = len(members)
+        counts = {r: sum(1 for m in members if a[m] == r) for r in ROLES}
+        assert sum(counts.values()) == n
+        for role, frac in FR.items():
+            assert abs(counts[role] - n * frac) < 1, (fam, role, counts)
+
+
+def test_fraction_validation():
+    with pytest.raises(ValueError, match="sum to 1"):
+        assign_roles({"bank": 0.5, "train": 0.2, "val": 0.2, "test": 0.2}, 0)
+    with pytest.raises(ValueError, match="exactly"):
+        assign_roles({"bank": 0.5, "test": 0.5}, 0)
+    with pytest.raises(ValueError, match="unknown role"):
+        tasks_with_role("holdout", FR, 0)
+
+
+def test_tasks_with_role_filters():
+    test_openml = tasks_with_role("test", FR, 0, benchmark="openml_tabular")
+    assert test_openml
+    assert set(test_openml) <= set(BY_ID)
+    vision_bank = tasks_with_role("bank", FR, 0, family="mlebench_vision")
+    assert all(t in LITE_COMPETITIONS for t in vision_bank)
+
+
+def test_split_of_returns_facts():
+    entry = split_of("openml_tabular", "wine_quality")
+    assert entry["family"] == "openml_tabular"
     assert split_of("openml_tabular", "nope") is None
-    with pytest.raises(ValueError, match="unknown bin"):
-        tasks_in("sideways")
 
 
-def test_unassigned_bins_run_nothing():
-    """The sign-off gate: until assignment, every task is unassigned and the
-    runnable bins are all EMPTY — a split: config ref cannot dispatch."""
-    if not _all_unassigned():
-        pytest.skip("assignments signed off — gate no longer applicable")
-    for bin_name in ("in_domain_source", "in_domain_eval", "near",
-                     "far_vision", "far_text"):
-        assert tasks_in(bin_name) == []
+def test_cli_families_and_assignment():
+    bare = CliRunner().invoke(main, ["splits"])
+    assert bare.exit_code == 0
+    assert "openml_tabular (11):" in bare.output
+    assert "excluded: mlsp-2013-birds" in bare.output
+    drawn = CliRunner().invoke(
+        main, ["splits", "--fractions", "bank=0.4,train=0.2,val=0.2,test=0.2"])
+    assert drawn.exit_code == 0
+    assert "bank " in drawn.output and "test " in drawn.output
 
 
-def test_cli_splits_command():
-    result = CliRunner().invoke(main, ["splits", "--bin", "unassigned"])
-    assert result.exit_code == 0
-    assert "wine_quality" in result.output
-
-
-def test_loaded_task_carries_its_split(tmp_path):
+def test_loaded_task_carries_split_facts(tmp_path):
     pd = pytest.importorskip("pandas")
     import json
 
@@ -77,35 +103,4 @@ def test_loaded_task_carries_its_split(tmp_path):
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
                           private_data_dir=str(tmp_path / "private"))
     task = bench.load_task("wine_quality")
-    assert task.metadata["split"]["bin"] in ("unassigned", "in_domain_source")
-
-
-# ------------------------------- design invariants (armed on sign-off)
-
-@assigned
-def test_in_domain_split_shape():
-    source, eval_ = tasks_in("in_domain_source"), tasks_in("in_domain_eval")
-    assert len(source) == 7 and len(eval_) == 3
-    kinds = {load_splits("openml_tabular")[t]["kind"] for t in eval_}
-    assert kinds == {"classification", "regression"}
-    assert tasks_in("control") == ["pol"]
-
-
-@assigned
-def test_near_bin_is_mlebench_tabular_only():
-    table = load_splits("mlebench_lite")
-    assert all(table[t]["modality"] == "tabular" for t in tasks_in("near"))
-
-
-@assigned
-def test_far_bins_are_modality_pure():
-    table = load_splits("mlebench_lite")
-    assert all(table[t]["modality"] == "vision" for t in tasks_in("far_vision"))
-    assert all(table[t]["modality"] == "text" for t in tasks_in("far_text"))
-
-
-@assigned
-def test_excluded_tasks_carry_reasons():
-    table = load_splits("mlebench_lite")
-    for task_id in tasks_in("excluded"):
-        assert table[task_id].get("note"), task_id
+    assert task.metadata["split"]["family"] == "openml_tabular"

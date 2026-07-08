@@ -14,7 +14,7 @@ asymmetry is what keeps grading fair and the firewall mount-level.
 from arbench.core.task import Task
 from arbench.core.result import Score
 from arbench.core.benchmark import Benchmark
-from arbench.core.splits import split_index, split_of, tasks_in
+from arbench.core.splits import assign_roles, families, split_of, tasks_with_role
 
 BENCHMARK_NAMES = ("mlebench_lite", "openml_tabular")
 
@@ -37,5 +37,5 @@ def get_benchmark(name: str, **kwargs) -> Benchmark:
 
 
 __all__ = ["Task", "Score", "Benchmark", "get_benchmark", "BENCHMARK_NAMES",
-           "split_index", "split_of", "tasks_in"]
+           "assign_roles", "families", "split_of", "tasks_with_role"]
 __version__ = "0.2.0"
