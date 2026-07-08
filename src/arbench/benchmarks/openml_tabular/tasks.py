@@ -1,8 +1,8 @@
-"""The OpenML tabular task set — the accumulation spine's dense, move-rich substrate.
+"""The curated OpenML tabular task set: the in-domain benchmark.
 
 Curated from the difficulty-filtered tabular ecosystem (Grinsztajn et al. 2022, which
 deliberately EXCLUDES tasks a simple model already solves — i.e. headroom by construction)
-plus a few OpenML-CTR23 regression tasks for move-family diversity ([S2]). Each entry is
+plus a few OpenML-CTR23 regression tasks for diversity. Each entry is
 plain data: an OpenML *dataset* id, the target column, the metric, and its direction.
 
 Data staging mirrors mlebench_lite: `prepare.py` materialises each task under

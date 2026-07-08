@@ -1,14 +1,15 @@
-"""data_version: a hash manifest of a prepared task dir, checked at load
-(benchmark plan §2 — "never silently shifting numbers").
+"""data_version: a pinned fingerprint of a prepared task dir, checked at load.
 
-The version hashes the FILE LISTING (relative path + size) rather than full
-contents: exact enough to catch re-prepares, renames, truncations, and added
-files, cheap enough to run on every load_task against multi-GB competition
-dirs. Trust-on-first-use: the first load stamps `.data_version` beside the
-data; every later load recomputes and must match — a mismatch fails LOUDLY
-(the run must die, not grade against different data). Graders recompute at
-grade time and stamp the value into Score.details, so a manifest-scan audit
-can catch anything graded before a change landed.
+Files up to CONTENT_HASH_MAX_BYTES are hashed by CONTENT; larger ones by
+relative path + size only (multi-GB competition data would make every
+load_task unaffordable). Prepared OpenML tasks and metadata files are all
+small, so for them this IS a content hash; equal-size rewrites can hide only
+inside huge files.
+
+Trust-on-first-use: the first load stamps `.data_version` beside the data;
+every later load recomputes and fails LOUDLY on drift. Graders recompute at
+grade time into Score.details, so a manifest-scan audit catches anything
+graded before a change landed.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import hashlib
 from pathlib import Path
 
 STAMP_NAME = ".data_version"
+CONTENT_HASH_MAX_BYTES = 8 * 1024 * 1024
 
 
 def compute_data_version(data_dir: Path) -> str:
@@ -25,7 +27,12 @@ def compute_data_version(data_dir: Path) -> str:
         if not path.is_file() or path.name == STAMP_NAME:
             continue
         rel = path.relative_to(data_dir)
-        h.update(f"{rel}:{path.stat().st_size}\n".encode())
+        size = path.stat().st_size
+        if size <= CONTENT_HASH_MAX_BYTES:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+            h.update(f"{rel}:{size}:{digest}\n".encode())
+        else:
+            h.update(f"{rel}:{size}\n".encode())
     return h.hexdigest()[:16]
 
 

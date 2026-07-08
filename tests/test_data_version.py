@@ -61,3 +61,10 @@ def test_openml_load_records_and_checks(tmp_path):
     (prep / "train.csv").write_text("id,y\n1,0\n2,1\n")
     with pytest.raises(RuntimeError, match="data_version mismatch"):
         bench.load_task("wine_quality")
+
+
+def test_same_size_content_rewrite_is_caught(tmp_path):
+    d = _tree(tmp_path / "prepared")
+    v1 = compute_data_version(d)
+    (d / "train.csv").write_text("a,b\n9,9\n")   # same size, different bytes
+    assert compute_data_version(d) != v1
