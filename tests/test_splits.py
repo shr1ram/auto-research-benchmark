@@ -29,7 +29,15 @@ def test_families_exclude_the_excluded_with_reasons():
             assert entry["excluded"]              # reason is mandatory
         else:
             assert ("mlebench_lite", task_id) in flat
-    assert "mlebench_audio" not in fams           # both members excluded
+
+
+def test_families_are_yaml_defined_not_hardcoded():
+    """Add/remove families by editing the yaml — the code derives everything."""
+    fams = families()
+    assert set(fams) == {"tabular", "text", "vision", "other"}
+    benchmarks_in_tabular = {b for b, _ in fams["tabular"]}
+    assert benchmarks_in_tabular == {"openml_tabular", "mlebench_lite"}
+    assert fams["other"] == [("mlebench_lite", "mlsp-2013-birds")]
 
 
 def test_assignment_is_deterministic_and_complete():
@@ -65,21 +73,21 @@ def test_tasks_with_role_filters():
     test_openml = tasks_with_role("test", FR, 0, benchmark="openml_tabular")
     assert test_openml
     assert set(test_openml) <= set(BY_ID)
-    vision_bank = tasks_with_role("bank", FR, 0, family="mlebench_vision")
+    vision_bank = tasks_with_role("bank", FR, 0, family="vision")
     assert all(t in LITE_COMPETITIONS for t in vision_bank)
 
 
 def test_split_of_returns_facts():
     entry = split_of("openml_tabular", "wine_quality")
-    assert entry["family"] == "openml_tabular"
+    assert entry["family"] == "tabular"
     assert split_of("openml_tabular", "nope") is None
 
 
 def test_cli_families_and_assignment():
     bare = CliRunner().invoke(main, ["splits"])
     assert bare.exit_code == 0
-    assert "openml_tabular (11):" in bare.output
-    assert "excluded: mlsp-2013-birds" in bare.output
+    assert "tabular (" in bare.output
+    assert "excluded: the-icml-2013-whale-challenge-right-whale-redux" in bare.output
     drawn = CliRunner().invoke(
         main, ["splits", "--fractions", "bank=0.5,val=0.2,test=0.3"])
     assert drawn.exit_code == 0
@@ -103,4 +111,4 @@ def test_loaded_task_carries_split_facts(tmp_path):
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
                           private_data_dir=str(tmp_path / "private"))
     task = bench.load_task("wine_quality")
-    assert task.metadata["split"]["family"] == "openml_tabular"
+    assert task.metadata["split"]["family"] == "tabular"

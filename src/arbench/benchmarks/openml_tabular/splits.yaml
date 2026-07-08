@@ -11,18 +11,18 @@
 # for analysis; they do not affect the draw.
 benchmark: openml_tabular
 tasks:
-  MagicTelescope:  {family: openml_tabular, kind: classification}
-  MiniBooNE:       {family: openml_tabular, kind: classification,
+  MagicTelescope:  {family: tabular, kind: classification}
+  MiniBooNE:       {family: tabular, kind: classification,
                     note: "near-ceiling at baseline (0.985) — check vs oracle"}
-  bank-marketing:  {family: openml_tabular, kind: classification}
-  cpu_activity:    {family: openml_tabular, kind: regression}
-  credit:          {family: openml_tabular, kind: classification}
-  electricity:     {family: openml_tabular, kind: classification,
+  bank-marketing:  {family: tabular, kind: classification}
+  cpu_activity:    {family: tabular, kind: regression}
+  credit:          {family: tabular, kind: classification}
+  electricity:     {family: tabular, kind: classification,
                     note: "temporal; random CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
-  wine_quality:    {family: openml_tabular, kind: regression}
-  covertype:       {family: openml_tabular, kind: classification,
+  wine_quality:    {family: tabular, kind: regression}
+  covertype:       {family: tabular, kind: classification,
                     note: "near-ceiling at baseline (0.970)"}
-  house_16H:       {family: openml_tabular, kind: classification}
-  superconduct:    {family: openml_tabular, kind: regression}
-  pol:             {family: openml_tabular, kind: classification,
+  house_16H:       {family: tabular, kind: classification}
+  superconduct:    {family: tabular, kind: regression}
+  pol:             {family: tabular, kind: classification,
                     note: "SATURATED at baseline (heldout 0.9997, gates 2026-07-08) — in the draw, but exclude from effect readouts"}

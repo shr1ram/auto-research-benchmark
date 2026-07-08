@@ -2,7 +2,11 @@
 (benchmark plan §2, 2026-07-08 design).
 
 Each plugin's splits.yaml records ONLY checkable facts — every task's FAMILY
-(benchmark × modality, the stratification unit) and exclusions with reasons.
+(a modality label: tabular / text / vision / other — the stratification unit;
+families are plain yaml strings, nothing here hardcodes them, so add/remove =
+edit the yaml) and exclusions with reasons. The tabular family spans both
+benchmarks; distance stays benchmark-relational via the benchmark filter and
+the manifests.
 Roles are computed, never stored:
 
     assign_roles({"bank": .5, "val": .2, "test": .3}, seed=0)

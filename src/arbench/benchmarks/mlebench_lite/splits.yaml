@@ -5,39 +5,41 @@
 # arbench.assign_roles(fractions, seed) from human-defined percentages,
 # stratified per family — never stored here.
 #
-# Distance stays benchmark-relational: openml_tabular is the in-domain spine;
-# mlebench_tabular = same modality / different benchmark (near);
-# mlebench_vision & mlebench_text = modality shift on top (far).
+# Families are MODALITY labels (tabular / text / vision / other — 2026-07-08):
+# plain strings in this yaml, nothing hardcoded in code, so adding/removing a
+# family later is a yaml edit. Distance stays benchmark-relational at ANALYSIS
+# time: manifests record (benchmark, family, role), and tasks_with_role takes
+# a benchmark filter — the tabular family spans both benchmarks by design.
 benchmark: mlebench_lite
 tasks:
-  tabular-playground-series-dec-2021:  {family: mlebench_tabular}
-  tabular-playground-series-may-2022:  {family: mlebench_tabular}
-  nomad2018-predict-transparent-conductors: {family: mlebench_tabular}
-  leaf-classification: {family: mlebench_tabular,
+  tabular-playground-series-dec-2021:  {family: tabular}
+  tabular-playground-series-may-2022:  {family: tabular}
+  nomad2018-predict-transparent-conductors: {family: tabular}
+  leaf-classification: {family: tabular,
                         note: "borderline: pre-extracted numeric shape features (tabular in practice, image-derived in origin)"}
 
-  aerial-cactus-identification:        {family: mlebench_vision}
-  aptos2019-blindness-detection:       {family: mlebench_vision}
-  dog-breed-identification:            {family: mlebench_vision}
-  dogs-vs-cats-redux-kernels-edition:  {family: mlebench_vision}
-  histopathologic-cancer-detection:    {family: mlebench_vision,
+  aerial-cactus-identification:        {family: vision}
+  aptos2019-blindness-detection:       {family: vision}
+  dog-breed-identification:            {family: vision}
+  dogs-vs-cats-redux-kernels-edition:  {family: vision}
+  histopathologic-cancer-detection:    {family: vision,
                                         note: "~220k tiny files — the inode hog"}
-  plant-pathology-2020-fgvc7:          {family: mlebench_vision}
-  ranzcr-clip-catheter-line-classification: {family: mlebench_vision}
-  siim-isic-melanoma-classification:   {family: mlebench_vision,
+  plant-pathology-2020-fgvc7:          {family: vision}
+  ranzcr-clip-catheter-line-classification: {family: vision}
+  siim-isic-melanoma-classification:   {family: vision,
                                         note: "190GB — the disk hog"}
-  denoising-dirty-documents:           {family: mlebench_vision,
+  denoising-dirty-documents:           {family: vision,
                                         note: "image-to-image output — unusually far even within vision"}
 
-  random-acts-of-pizza:                {family: mlebench_text}
-  spooky-author-identification:        {family: mlebench_text}
-  jigsaw-toxic-comment-classification-challenge: {family: mlebench_text}
-  us-patent-phrase-to-phrase-matching: {family: mlebench_text}
-  text-normalization-challenge-english-language: {family: mlebench_text,
+  random-acts-of-pizza:                {family: text}
+  spooky-author-identification:        {family: text}
+  jigsaw-toxic-comment-classification-challenge: {family: text}
+  us-patent-phrase-to-phrase-matching: {family: text}
+  text-normalization-challenge-english-language: {family: text,
                                         note: "seq2seq — may fail the agent-runs gate"}
-  text-normalization-challenge-russian-language: {family: mlebench_text,
+  text-normalization-challenge-russian-language: {family: text,
                                         note: "seq2seq — may fail the agent-runs gate"}
 
-  mlsp-2013-birds:                     {family: mlebench_audio, excluded: "audio singleton — a one-task family cannot be split"}
-  detecting-insults-in-social-commentary: {family: mlebench_text, excluded: "permanently Kaggle-closed; data unobtainable"}
-  the-icml-2013-whale-challenge-right-whale-redux: {family: mlebench_audio, excluded: "permanently Kaggle-closed; data unobtainable"}
+  mlsp-2013-birds:                     {family: other, note: "audio"}
+  detecting-insults-in-social-commentary: {family: text, excluded: "permanently Kaggle-closed; data unobtainable"}
+  the-icml-2013-whale-challenge-right-whale-redux: {family: other, excluded: "permanently Kaggle-closed; data unobtainable"}
