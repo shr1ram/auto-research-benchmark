@@ -77,6 +77,15 @@ def test_tasks_with_role_filters():
     assert all(t in LITE_COMPETITIONS for t in vision_bank)
 
 
+def test_every_task_has_a_published_date():
+    """The contamination axis: pre/post model-cutoff comparisons need dates.
+    (Format is enforced at load; this pins that loading succeeds and every
+    current task is pre-2023 — post-cutoff tasks must be sourced deliberately.)"""
+    for benchmark in ("openml_tabular", "mlebench_lite"):
+        for task_id, entry in load_split_meta(benchmark).items():
+            assert int(str(entry["published"])[:4]) <= 2022, (task_id, entry)
+
+
 def test_split_of_returns_facts():
     entry = split_of("openml_tabular", "wine_quality")
     assert entry["family"] == "tabular"

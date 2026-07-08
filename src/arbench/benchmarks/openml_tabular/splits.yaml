@@ -8,21 +8,25 @@
 # (a hashed confound), so no run can happen before the human sets them.
 #
 # Notes are measured observations from the 2026-07-08 gates sweep, recorded
-# for analysis; they do not affect the draw.
+# for analysis; they do not affect the draw.#
+# `published` = when the task's DATA first became public (origin, not the
+# 2022 OpenML re-upload date) — the contamination axis: pre/post model-cutoff
+# comparisons read this field. Every current task is pre-2023; post-cutoff
+# tasks must be sourced deliberately.
 benchmark: openml_tabular
 tasks:
-  MagicTelescope:  {family: tabular, kind: classification}
-  MiniBooNE:       {family: tabular, kind: classification,
+  MagicTelescope:  {published: "2004", family: tabular, kind: classification}
+  MiniBooNE:       {published: "2005", family: tabular, kind: classification,
                     note: "near-ceiling at baseline (0.985) — check vs oracle"}
-  bank-marketing:  {family: tabular, kind: classification}
-  cpu_activity:    {family: tabular, kind: regression}
-  credit:          {family: tabular, kind: classification}
-  electricity:     {family: tabular, kind: classification,
+  bank-marketing:  {published: "2012", family: tabular, kind: classification}
+  cpu_activity:    {published: "1996", family: tabular, kind: regression}
+  credit:          {published: "2011", family: tabular, kind: classification}
+  electricity:     {published: "1999", family: tabular, kind: classification,
                     note: "temporal; random CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
-  wine_quality:    {family: tabular, kind: regression}
-  covertype:       {family: tabular, kind: classification,
+  wine_quality:    {published: "2009", family: tabular, kind: regression}
+  covertype:       {published: "1998", family: tabular, kind: classification,
                     note: "near-ceiling at baseline (0.970)"}
-  house_16H:       {family: tabular, kind: classification}
-  superconduct:    {family: tabular, kind: regression}
-  pol:             {family: tabular, kind: classification,
+  house_16H:       {published: "1996", family: tabular, kind: classification}
+  superconduct:    {published: "2018", family: tabular, kind: regression}
+  pol:             {published: "1995", family: tabular, kind: classification,
                     note: "SATURATED at baseline (heldout 0.9997, gates 2026-07-08) — in the draw, but exclude from effect readouts"}

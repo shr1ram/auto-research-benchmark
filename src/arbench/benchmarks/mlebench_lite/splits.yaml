@@ -5,6 +5,9 @@
 # arbench.assign_roles(fractions, seed) from human-defined percentages,
 # stratified per family — never stored here.
 #
+# `published` = the Kaggle competition date (task + data went public
+# together) — the contamination axis for pre/post model-cutoff comparisons.
+#
 # Families are MODALITY labels (tabular / text / vision / other — 2026-07-08):
 # plain strings in this yaml, nothing hardcoded in code, so adding/removing a
 # family later is a yaml edit. Distance stays benchmark-relational at ANALYSIS
@@ -12,37 +15,37 @@
 # a benchmark filter — the tabular family spans both benchmarks by design.
 benchmark: mlebench_lite
 tasks:
-  tabular-playground-series-dec-2021:  {family: tabular}
-  tabular-playground-series-may-2022:  {family: tabular}
-  nomad2018-predict-transparent-conductors: {family: tabular,
+  tabular-playground-series-dec-2021:  {published: "2021-12", family: tabular}
+  tabular-playground-series-may-2022:  {published: "2022-05", family: tabular}
+  nomad2018-predict-transparent-conductors: {published: "2018-02", family: tabular,
                         note: "FAMILY WARNING: Kaggle also ships crystal GEOMETRY files; most solutions work the tabular summaries — kept tabular (user-reviewed 2026-07-08)"}
-  leaf-classification: {family: tabular,
+  leaf-classification: {published: "2017-02", family: tabular,
                         note: "FAMILY WARNING: leaf IMAGES are provided alongside pre-extracted shape/margin/texture vectors; standard solutions use the vectors — kept tabular, the strongest borderline (user-reviewed 2026-07-08)"}
 
-  aerial-cactus-identification:        {family: vision}
-  aptos2019-blindness-detection:       {family: vision}
-  dog-breed-identification:            {family: vision}
-  dogs-vs-cats-redux-kernels-edition:  {family: vision}
-  histopathologic-cancer-detection:    {family: vision,
+  aerial-cactus-identification:        {published: "2019-07", family: vision}
+  aptos2019-blindness-detection:       {published: "2019-09", family: vision}
+  dog-breed-identification:            {published: "2018-02", family: vision}
+  dogs-vs-cats-redux-kernels-edition:  {published: "2017-03", family: vision}
+  histopathologic-cancer-detection:    {published: "2019-03", family: vision,
                                         note: "~220k tiny files — the inode hog"}
-  plant-pathology-2020-fgvc7:          {family: vision}
-  ranzcr-clip-catheter-line-classification: {family: vision}
-  siim-isic-melanoma-classification:   {family: vision,
+  plant-pathology-2020-fgvc7:          {published: "2020-05", family: vision}
+  ranzcr-clip-catheter-line-classification: {published: "2021-03", family: vision}
+  siim-isic-melanoma-classification:   {published: "2020-08", family: vision,
                                         note: "FAMILY WARNING: images PLUS patient metadata (age/sex/site) — image-dominant, kept vision (user-reviewed 2026-07-08). Also 190GB — the disk hog"}
-  denoising-dirty-documents:           {family: vision,
+  denoising-dirty-documents:           {published: "2015-10", family: vision,
                                         note: "FAMILY WARNING: image-to-image OUTPUT (a cleaned image, not a label) — the odd one out in format; kept vision (user-reviewed 2026-07-08)"}
 
-  random-acts-of-pizza:                {family: text,
+  random-acts-of-pizza:                {published: "2014-06", family: text,
                                         note: "FAMILY WARNING: request text PLUS requester metadata — text-dominant, kept text (user-reviewed 2026-07-08)"}
-  spooky-author-identification:        {family: text}
-  jigsaw-toxic-comment-classification-challenge: {family: text}
-  us-patent-phrase-to-phrase-matching: {family: text}
-  text-normalization-challenge-english-language: {family: text,
+  spooky-author-identification:        {published: "2017-10", family: text}
+  jigsaw-toxic-comment-classification-challenge: {published: "2018-03", family: text}
+  us-patent-phrase-to-phrase-matching: {published: "2022-06", family: text}
+  text-normalization-challenge-english-language: {published: "2017-11", family: text,
                                         note: "seq2seq — may fail the agent-runs gate"}
-  text-normalization-challenge-russian-language: {family: text,
+  text-normalization-challenge-russian-language: {published: "2017-11", family: text,
                                         note: "seq2seq — may fail the agent-runs gate"}
 
-  mlsp-2013-birds:                     {family: other,
+  mlsp-2013-birds:                     {published: "2013-07", family: other,
                                         note: "FAMILY WARNING: audio (spectrograms); sole member of `other` — a 1-task family gets a single role per draw and cannot self-split (user-reviewed 2026-07-08)"}
-  detecting-insults-in-social-commentary: {family: text, excluded: "permanently Kaggle-closed; data unobtainable"}
-  the-icml-2013-whale-challenge-right-whale-redux: {family: other, excluded: "permanently Kaggle-closed; data unobtainable"}
+  detecting-insults-in-social-commentary: {published: "2012-09", family: text, excluded: "permanently Kaggle-closed; data unobtainable"}
+  the-icml-2013-whale-challenge-right-whale-redux: {published: "2013-04", family: other, excluded: "permanently Kaggle-closed; data unobtainable"}

@@ -1,7 +1,9 @@
 """Task splits: automatic role assignment from human-defined fractions
 (benchmark plan §2, 2026-07-08 design).
 
-Each plugin's splits.yaml records ONLY checkable facts — every task's FAMILY
+Each plugin's splits.yaml records ONLY checkable facts — every task's
+PUBLISHED date (when its data first became public — the contamination axis
+for pre/post model-cutoff comparisons) and its FAMILY
 (a modality label: tabular / text / vision / other — the stratification unit;
 families are plain yaml strings, nothing here hardcodes them, so add/remove =
 edit the yaml) and exclusions with reasons. The tabular family spans both
@@ -27,6 +29,7 @@ development/debugging burns bank tasks or CI fixtures, never val/test):
 from __future__ import annotations
 
 import random
+import re
 from functools import lru_cache
 from importlib import resources
 from typing import Any, Optional
@@ -51,6 +54,10 @@ def load_split_meta(benchmark: str) -> dict[str, dict[str, Any]]:
     for task_id, entry in data["tasks"].items():
         if not entry.get("family"):
             raise ValueError(f"{benchmark}/{task_id}: missing family")
+        published = entry.get("published", "")
+        if not re.fullmatch(r"\d{4}(-\d{2})?", str(published)):
+            raise ValueError(f"{benchmark}/{task_id}: published must be "
+                             f"YYYY or YYYY-MM, got {published!r}")
     return data["tasks"]
 
 
