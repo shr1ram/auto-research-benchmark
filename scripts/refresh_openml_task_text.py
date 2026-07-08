@@ -72,7 +72,7 @@ def main(argv):
     data_root = Path(root)
     proot = os.environ.get("OPENML_PRIVATE_DATA_DIR")
     private_root = Path(proot) if proot else data_root.parent / "private"
-    ids = argv[1:] or sorted(p.parent.name for p in data_root.glob("*/prepared/meta.json"))
+    ids = argv[1:] or sorted(p.parent.parent.name for p in data_root.glob("*/prepared/meta.json"))
     ok, fail = [], []
     for tid in ids:
         try:
