@@ -1,41 +1,28 @@
-# Python
+# python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.eggs/
 build/
 dist/
 .venv/
-venv/
+.pytest_cache/
 
-# secrets / local env (never commit keys)
-.env
-*.env.local
-configs/*.env
-!configs/*.env.example
-
-# run artifacts / data (huge; lives on the project FS, never committed)
-runs/
-workspaces/
-logs/
+# benchmark data: re-downloadable input, lives on the project FS
 data/
-mlebench-data/
+
+# vendored checkouts are gitignored; the pin lives in vendor/README.md
 vendor/*
 !vendor/README.md
-*.csv
-!tests/**/*.csv
-# full-run trace bundles (run.json, llm_calls.jsonl, artifacts/) live under runs/
-llm_calls.jsonl
-run.json
-# downloader logs/progress from data prep
-*.progress
-*.nohup
-prepare_all.log
-dl_*.log
 
-# tooling
-.pytest_cache/
-.uv-cache/
-.DS_Store
+# generated on first load beside the data
+.data_version
+
+# box-local artifacts kept outside version control
 cache/
 oracle-solutions/
+
+# no stray datasets in the repo (test fixtures excepted)
+*.csv
+!tests/**/*.csv
+
+.DS_Store
