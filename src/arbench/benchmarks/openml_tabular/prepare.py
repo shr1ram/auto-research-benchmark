@@ -89,6 +89,8 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
             f"not in columns: {list(df.columns)[:20]}"
         )
     df = df.reset_index(drop=True)
+    if "row_id" in df.columns:   # a few datasets ship their own row_id
+        df = df.rename(columns={"row_id": "row_id_orig"})
     df.insert(0, "row_id", np.arange(len(df)))
 
     rng = np.random.default_rng(SEED)
