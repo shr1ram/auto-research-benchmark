@@ -32,11 +32,16 @@ arbench/
 └── cli.py             # arbench tasks | arbench grade — the two hand-tools
 ```
 
-A benchmark plugs in by implementing three methods (`list_tasks`, `load_task`,
-`grade`) plus a `splits.yaml` (family + exclusions; roles are computed from
-fractions, never stored). Library surface: `arbench.get_benchmark(name)`,
+A benchmark plugs in by implementing three methods — `list_tasks`,
+`load_task` (the agent-visible Task only; never name the answers), and
+`grade` (return `Score.invalid(...)`, never raise, on missing/malformed
+submissions) — plus a `splits.yaml` (family + exclusions; roles are computed
+from fractions, never stored) and a lazy-import branch in
+`arbench.get_benchmark`. Library surface: `get_benchmark`,
 `assign_roles/tasks_with_role/families/split_of` (lazy imports — the package
-works on a bare machine).
+works on a bare machine). `Task.render_goal(visible_data_dir)` rewrites host
+data paths for runs that see the data elsewhere (e.g. bind-mounted in a
+container).
 
 ## Data layout + firewall
 
@@ -75,7 +80,9 @@ score = bench.grade(task, submission_path)        # Score(value, valid, ...)
 
 ### Prerequisites for the MLE-Bench Lite benchmark
 
-`mlebench_lite` wraps `openai/mle-bench`, so on the run box you need:
+`mlebench_lite` wraps `openai/mle-bench`'s **low-complexity split** (22
+Kaggle competitions; we reuse its own registry + `grade_csv`, list tasks
+smallest-first, and never need its docker harness). On the run box you need:
 
 1. `uv sync --extra mlebench`  (editable dep on `vendor/mle-bench`)
 2. Kaggle API creds at `~/.kaggle/kaggle.json`, **and** to accept each
