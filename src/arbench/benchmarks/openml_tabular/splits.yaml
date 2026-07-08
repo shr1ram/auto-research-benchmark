@@ -2,7 +2,7 @@
 #
 # This file records ONLY checkable facts: each task's FAMILY (benchmark ×
 # modality — the stratification unit) and exclusions with reasons. Role
-# assignment (bank / train / val / test) is NEVER stored here: it is computed
+# assignment (bank / val / test) is NEVER stored here: it is computed
 # deterministically by arbench.assign_roles(fractions, seed) from the
 # human-defined percentages — the fractions live in the experiment config
 # (a hashed confound), so no run can happen before the human sets them.

@@ -1,7 +1,7 @@
 # Split metadata for mlebench_lite (benchmark plan §2).
 #
 # ONLY checkable facts: FAMILY (benchmark × modality) and exclusions with
-# reasons. Roles (bank / train / val / test) are computed by
+# reasons. Roles (bank / val / test) are computed by
 # arbench.assign_roles(fractions, seed) from human-defined percentages,
 # stratified per family — never stored here.
 #
