@@ -1,0 +1,28 @@
+# Split metadata for openml_tabular (benchmark plan §2).
+#
+# This file records ONLY checkable facts: each task's FAMILY (benchmark ×
+# modality — the stratification unit) and exclusions with reasons. Role
+# assignment (bank / train / val / test) is NEVER stored here: it is computed
+# deterministically by arbench.assign_roles(fractions, seed) from the
+# human-defined percentages — the fractions live in the experiment config
+# (a hashed confound), so no run can happen before the human sets them.
+#
+# Notes are measured observations from the 2026-07-08 gates sweep, recorded
+# for analysis; they do not affect the draw.
+benchmark: openml_tabular
+tasks:
+  MagicTelescope:  {family: tabular, kind: classification}
+  MiniBooNE:       {family: tabular, kind: classification,
+                    note: "near-ceiling at baseline (0.985) — check vs oracle"}
+  bank-marketing:  {family: tabular, kind: classification}
+  cpu_activity:    {family: tabular, kind: regression}
+  credit:          {family: tabular, kind: classification}
+  electricity:     {family: tabular, kind: classification,
+                    note: "temporal; random CV leaks (baseline proxy 0.996 vs heldout 0.879)"}
+  wine_quality:    {family: tabular, kind: regression}
+  covertype:       {family: tabular, kind: classification,
+                    note: "near-ceiling at baseline (0.970)"}
+  house_16H:       {family: tabular, kind: classification}
+  superconduct:    {family: tabular, kind: regression}
+  pol:             {family: tabular, kind: classification,
+                    note: "SATURATED at baseline (heldout 0.9997, gates 2026-07-08) — in the draw, but exclude from effect readouts"}

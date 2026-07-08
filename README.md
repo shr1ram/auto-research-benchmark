@@ -19,15 +19,16 @@ thesis repo now.)
 ```
 arbench/
 ├── core/
-│   ├── task.py        # Task: benchmark-agnostic unit of work (+ render_goal
-│   │                  #   for container-visible paths)
-│   ├── benchmark.py   # Benchmark ABC: list_tasks / load_task / grade
-│   └── result.py      # Score
+│   ├── task.py           # Task: benchmark-agnostic unit of work (+ render_goal
+│   │                     #   for container-visible paths)
+│   ├── benchmark.py      # Benchmark ABC: list_tasks / load_task / grade
+│   ├── result.py         # Score
+│   └── data_version.py   # hash manifest of prepared dirs: stamped on first
+│                         #   load, checked on every load, restamped in
+│                         #   Score.details at grade (audit hook)
 ├── benchmarks/
 │   ├── mlebench_lite/     # wraps openai/mle-bench (vendor/mle-bench extra)
 │   └── openml_tabular/    # 11 curated tabular tasks (prepare + grade built in)
-├── batch/             # LEGACY: kept only until its scheduler semantics + tests
-│                      #   are ported to the thesis grid driver, then deleted
 └── cli.py             # arbench tasks | arbench grade — the two hand-tools
 ```
 

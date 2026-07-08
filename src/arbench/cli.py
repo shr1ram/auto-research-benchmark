@@ -41,6 +41,34 @@ def tasks_cmd(benchmark_name, data_dir):
         click.echo(task_id)
 
 
+@main.command("splits")
+@click.option("--fractions", default=None,
+              help="bank=0.5,val=0.2,test=0.3 -> show the assignment")
+@click.option("--seed", default=0, type=int, help="draw seed (default 0)")
+def splits_cmd(fractions, seed):
+    """The split index: families (facts) and, given fractions, the automatic
+    seeded role assignment (bank/val/test, stratified per family)."""
+    from arbench.core.splits import assign_roles, families, load_split_meta
+    fams = families()
+    if not fractions:
+        for fam, members in fams.items():
+            click.echo(f"{fam} ({len(members)}):")
+            for benchmark, task_id in members:
+                click.echo(f"  {task_id}")
+        for b in ("openml_tabular", "mlebench_lite"):
+            for task_id, e in load_split_meta(b).items():
+                if e.get("excluded"):
+                    click.echo(f"excluded: {task_id} — {e['excluded']}")
+        click.echo("(pass --fractions to see the role assignment)")
+        return
+    fr = {k: float(v) for k, v in (kv.split("=") for kv in fractions.split(","))}
+    assignment = assign_roles(fr, seed)
+    for fam, members in fams.items():
+        click.echo(f"{fam}:")
+        for key in members:
+            click.echo(f"  {assignment[key]:5s} {key[1]}")
+
+
 @main.command("grade")
 @click.option("--benchmark", "benchmark_name", required=True,
               type=click.Choice(arbench.BENCHMARK_NAMES))

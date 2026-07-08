@@ -35,6 +35,10 @@ mlebench = { path = "vendor/mle-bench", editable = true }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"arbench.benchmarks.openml_tabular" = ["splits.yaml"]
+"arbench.benchmarks.mlebench_lite" = ["splits.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 120

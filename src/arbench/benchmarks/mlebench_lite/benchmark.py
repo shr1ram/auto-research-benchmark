@@ -33,6 +33,8 @@ from typing import Iterable
 from arbench.core.benchmark import Benchmark
 from arbench.core.task import Task
 from arbench.core.result import Score
+from arbench.core.data_version import compute_data_version, verify_data_version
+from arbench.core.splits import split_of
 from arbench.benchmarks.mlebench_lite.tasks import LITE_COMPETITIONS, SMALL_FIRST
 
 
@@ -111,6 +113,7 @@ class MLEBenchLite(Benchmark):
                 f"{self.private_data_dir / task_id / 'prepared' / 'private'} "
                 f"before serving this task."
             )
+        data_version = verify_data_version(public_dir)   # loud on drift (plan §2)
         goal = (
             f"{comp.description}\n\n"
             f"Read the training data under: {public_dir}\n"
@@ -129,6 +132,8 @@ class MLEBenchLite(Benchmark):
                 "competition_id": task_id,
                 "sample_submission": str(comp.sample_submission),
                 "is_lower_better": bool(getattr(comp.grader, "is_lower_better", False)),
+                "data_version": data_version,
+                "split": split_of(self.name, task_id),
             },
         )
 
@@ -173,6 +178,10 @@ class MLEBenchLite(Benchmark):
                 "above_median": bool(getattr(report, "above_median", False)),
                 "gold_threshold": getattr(report, "gold_threshold", None),
                 "median_threshold": getattr(report, "median_threshold", None),
+                # recomputed HERE (the audit hook): catches data that changed
+                # between load and grade
+                "data_version": compute_data_version(task.data_dir)
+                if task.data_dir and task.data_dir.exists() else "",
             },
         )
 
