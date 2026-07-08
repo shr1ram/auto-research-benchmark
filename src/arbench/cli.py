@@ -43,11 +43,11 @@ def tasks_cmd(benchmark_name, data_dir):
 
 @main.command("splits")
 @click.option("--fractions", default=None,
-              help="bank=0.4,train=0.2,val=0.2,test=0.2 -> show the assignment")
+              help="bank=0.5,val=0.2,test=0.3 -> show the assignment")
 @click.option("--seed", default=0, type=int, help="draw seed (default 0)")
 def splits_cmd(fractions, seed):
     """The split index: families (facts) and, given fractions, the automatic
-    seeded role assignment (bank/train/val/test, stratified per family)."""
+    seeded role assignment (bank/val/test, stratified per family)."""
     from arbench.core.splits import assign_roles, families, load_split_meta
     fams = families()
     if not fractions:

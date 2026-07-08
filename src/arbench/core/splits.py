@@ -5,8 +5,8 @@ Each plugin's splits.yaml records ONLY checkable facts — every task's FAMILY
 (benchmark × modality, the stratification unit) and exclusions with reasons.
 Roles are computed, never stored:
 
-    assign_roles({"bank": .4, "train": .2, "val": .2, "test": .2}, seed=0)
-        -> {(benchmark, task_id): "bank" | "train" | "val" | "test"}
+    assign_roles({"bank": .5, "val": .2, "test": .3}, seed=0)
+        -> {(benchmark, task_id): "bank" | "val" | "test"}
 
 The draw is deterministic (seeded shuffle per family) and stratified: every
 family is split at the same percentages, rounded by largest remainder. The
@@ -14,9 +14,9 @@ FRACTIONS are the single human knob and live in the experiment config (a
 hashed confound) — with no fractions defined, no role exists and nothing can
 run on a split.
 
-Roles:
+Roles (no train: bank building IS the fitting stage, so bank ≈ train;
+development/debugging burns bank tasks or CI fixtures, never val/test):
     bank   memory-free source runs; their traces build the banks
-    train  development runs (iterate pipeline/prompts with memory)
     val    model selection (choose g*, retriever, k)
     test   final readout — touched once
 """
@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 import yaml
 
-ROLES = ("bank", "train", "val", "test")
+ROLES = ("bank", "val", "test")
 BENCHMARKS = ("openml_tabular", "mlebench_lite")
 
 TaskKey = tuple[str, str]   # (benchmark, task_id)

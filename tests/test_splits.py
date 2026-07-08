@@ -11,7 +11,7 @@ from arbench.core.splits import (
     ROLES, assign_roles, families, load_split_meta, split_of, tasks_with_role,
 )
 
-FR = {"bank": 0.4, "train": 0.2, "val": 0.2, "test": 0.2}
+FR = {"bank": 0.5, "val": 0.2, "test": 0.3}
 
 
 def test_every_task_is_listed_with_a_family():
@@ -54,9 +54,9 @@ def test_stratified_largest_remainder_counts():
 
 def test_fraction_validation():
     with pytest.raises(ValueError, match="sum to 1"):
-        assign_roles({"bank": 0.5, "train": 0.2, "val": 0.2, "test": 0.2}, 0)
+        assign_roles({"bank": 0.6, "val": 0.2, "test": 0.3}, 0)
     with pytest.raises(ValueError, match="exactly"):
-        assign_roles({"bank": 0.5, "test": 0.5}, 0)
+        assign_roles({"bank": 0.5, "train": 0.2, "val": 0.1, "test": 0.2}, 0)
     with pytest.raises(ValueError, match="unknown role"):
         tasks_with_role("holdout", FR, 0)
 
@@ -81,7 +81,7 @@ def test_cli_families_and_assignment():
     assert "openml_tabular (11):" in bare.output
     assert "excluded: mlsp-2013-birds" in bare.output
     drawn = CliRunner().invoke(
-        main, ["splits", "--fractions", "bank=0.4,train=0.2,val=0.2,test=0.2"])
+        main, ["splits", "--fractions", "bank=0.5,val=0.2,test=0.3"])
     assert drawn.exit_code == 0
     assert "bank " in drawn.output and "test " in drawn.output
 
