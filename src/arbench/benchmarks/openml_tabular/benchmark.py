@@ -109,6 +109,48 @@ class OpenMLTabular(Benchmark):
             },
         )
 
+    def validate_submission(self, task: Task,
+                            submission_path: Path) -> tuple[bool, str | None]:
+        """PUBLIC-data-only mirror of grade()'s validity gates (columns from
+        meta, row ids from test.csv) — the per-attempt loop check never opens
+        the answers file. Agreement with grade() is pinned by test."""
+        meta = task.metadata
+        id_col, kind = meta["id_col"], meta.get("kind")
+        try:
+            import pandas as pd
+            sub = pd.read_csv(submission_path)
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not read submission: {e}"
+        if kind == "regression":
+            expected = ["prediction"]
+        else:
+            expected = list(meta.get("classes") or [])
+            if not expected:
+                return False, ("meta.json has no classes for a classification "
+                               "task — re-run prepare/refresh for this task")
+        missing = [c for c in [id_col] + expected if c not in sub.columns]
+        if missing:
+            return False, (f"submission must have columns {[id_col] + expected}; "
+                           f"missing {missing} (got {list(sub.columns)})")
+        try:
+            test_ids = pd.read_csv(task.data_dir / "test.csv", usecols=[id_col])
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not read test.csv ids: {e}"
+        sub = sub.drop_duplicates(subset=[id_col])
+        merged = test_ids.merge(sub[[id_col] + expected], on=id_col, how="left")
+        if merged[expected].isna().any().any():
+            n = int(merged[expected].isna().any(axis=1).sum())
+            return False, f"submission missing predictions for {n} test rows"
+        if kind != "regression":
+            try:
+                probs = merged[expected].to_numpy(dtype=float)
+            except Exception as e:  # noqa: BLE001
+                return False, f"class probabilities must be numeric: {e}"
+            if (probs < 0).any() or (probs.sum(axis=1) <= 0).any():
+                return False, ("class probabilities must be non-negative "
+                               "and sum > 0 per row")
+        return True, None
+
     def grade(self, task: Task, submission_path: Path) -> Score:
         meta = task.metadata
         hb = not meta.get("is_lower_better", False)

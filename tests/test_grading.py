@@ -199,3 +199,51 @@ def test_openml_rejects_negative_probabilities(tmp_path):
                   "a": [-0.5, 0.5, 0.5], "b": [1.5, 0.5, 0.5]}).to_csv(sub, index=False)
     score = bench.grade(task, sub)
     assert not score.valid and "non-negative" in score.details["reason"]
+
+
+def test_openml_validate_submission_agrees_with_grade(tmp_path):
+    """validate_submission is the public-only mirror of grade()'s validity
+    gates: same verdict on every failure mode, no answers file needed."""
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+
+    cases = {
+        "valid": pd.DataFrame({"row_id": [3, 4, 5],
+                               "a": [0.9, 0.2, 0.1], "b": [0.1, 0.8, 0.9]}),
+        "wrong_columns": pd.DataFrame({"row_id": [3, 4, 5],
+                                       "prediction": [0.1, 0.8, 0.9]}),
+        "missing_rows": pd.DataFrame({"row_id": [3, 4],
+                                      "a": [0.9, 0.2], "b": [0.1, 0.8]}),
+        "negative_probs": pd.DataFrame({"row_id": [3, 4, 5],
+                                        "a": [-0.5, 0.5, 0.5], "b": [1.5, 0.5, 0.5]}),
+    }
+    for name, frame in cases.items():
+        frame.to_csv(sub, index=False)
+        ok, reason = bench.validate_submission(task, sub)
+        score = bench.grade(task, sub)
+        assert ok == score.valid, f"{name}: validate={ok} but grade.valid={score.valid}"
+        if not ok:
+            assert reason, name
+
+    # and it truly never opens the answers: delete them, valid file still validates
+    (tmp_path / "private" / TASK / "answers.csv").unlink()
+    cases["valid"].to_csv(sub, index=False)
+    assert bench.validate_submission(task, sub) == (True, None)
+
+
+def test_validate_submission_default_strips_score(tmp_path):
+    """The ABC default (grade-and-strip) returns ONLY (ok, reason) — the tuple
+    shape is the firewall."""
+    _stage_openml(tmp_path, metric="rmse", kind="regression")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 4, 5], "prediction": [4.0, 5.0, 6.0]}).to_csv(sub, index=False)
+    from arbench.core.benchmark import Benchmark
+    result = Benchmark.validate_submission(bench, task, sub)   # force the default
+    assert result == (True, None)
+    sub.write_text("row_id,prediction\n")
+    ok, reason = Benchmark.validate_submission(bench, task, sub)
+    assert not ok and isinstance(reason, str)
