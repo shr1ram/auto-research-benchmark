@@ -84,11 +84,14 @@ class MLEBenchLite(Benchmark):
         return registry.set_data_dir(self.private_data_dir) if self.private_data_dir else registry
 
     def _require_private_root(self) -> None:
-        if self.private_data_dir is None:
+        same_root = (self.private_data_dir is not None
+                     and self.data_dir is not None
+                     and self.private_data_dir.resolve() == self.data_dir.resolve())
+        if self.private_data_dir is None or same_root:
             raise RuntimeError(
-                "no private data root: set MLEBENCH_PRIVATE_DATA_DIR (or create "
-                "the sibling '<data_dir>-private') — the legacy single-root mode "
-                "was removed; answers must never live in the agent-bindable tree")
+                "no SEPARATE private data root: set MLEBENCH_PRIVATE_DATA_DIR (or "
+                "create the sibling '<data_dir>-private') — the legacy single-root "
+                "mode was removed; answers must never live in the agent-bindable tree")
 
     def _firewalled(self) -> bool:
         return (self.private_data_dir is not None

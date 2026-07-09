@@ -114,5 +114,12 @@ def test_mlebench_refuses_to_run_without_a_private_root(tmp_path, monkeypatch):
     monkeypatch.delenv("MLEBENCH_PRIVATE_DATA_DIR", raising=False)
     bench = MLEBenchLite(data_dir=str(tmp_path / "nothing-private-here"))
     assert bench.private_data_dir is None
-    with pytest.raises(RuntimeError, match="no private data root"):
+    with pytest.raises(RuntimeError, match="private data root"):
         bench.load_task("random-acts-of-pizza")
+    # pointing the private root AT the public root is the same leak (cubic)
+    pub = tmp_path / "pub"
+    pub.mkdir()
+    monkeypatch.setenv("MLEBENCH_PRIVATE_DATA_DIR", str(pub))
+    same = MLEBenchLite(data_dir=str(pub))
+    with pytest.raises(RuntimeError, match="SEPARATE private data root"):
+        same.load_task("random-acts-of-pizza")
