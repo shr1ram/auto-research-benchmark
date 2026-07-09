@@ -32,9 +32,13 @@ def refresh_one(prep: Path, answers_csv: Path) -> dict:
     if kind != "regression":
         train_labels = pd.read_csv(prep / "train.csv", usecols=[target])[target]
         labels = set(train_labels.dropna().astype(str))
-        if answers_csv.exists():
-            ans = pd.read_csv(answers_csv, usecols=[target])[target]
-            labels |= set(ans.dropna().astype(str))
+        if not answers_csv.exists():
+            # classes must cover heldout-only labels; a train-only list would
+            # silently corrupt the grader's expected columns
+            raise FileNotFoundError(
+                f"answers not found at {answers_csv} — set OPENML_PRIVATE_DATA_DIR")
+        ans = pd.read_csv(answers_csv, usecols=[target])[target]
+        labels |= set(ans.dropna().astype(str))
         classes = sorted(labels)
         if any(c == meta["id_col"] for c in classes):
             raise ValueError(f"class value collides with id column: {classes}")

@@ -30,7 +30,8 @@ class OpenMLTaskSpec:
     metric: str             # 'roc_auc' | 'log_loss' | 'rmse' | 'accuracy'
     higher_better: bool
     kind: str               # 'binary' | 'multiclass' | 'regression'
-    note: str = ""          # short human hint
+    provenance: str = ""    # curation record (source suite / original name);
+                            # NEVER reaches prepared data or the agent
     # optional override if OpenML's default target col name differs; else use `target`
     positive_label: Optional[str] = None
 

@@ -186,3 +186,16 @@ def test_mlebench_private_root_resolution(tmp_path, monkeypatch):
     env_fw = MLEBenchLite(data_dir=str(pub))
     assert env_fw.private_data_dir == other
     assert env_fw._firewalled()
+
+
+def test_openml_rejects_negative_probabilities(tmp_path):
+    """A row like [-0.5, 1.5] sums to 1 but is not a distribution — reject,
+    don't renormalise (cubic review, PR #8)."""
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "a": [-0.5, 0.5, 0.5], "b": [1.5, 0.5, 0.5]}).to_csv(sub, index=False)
+    score = bench.grade(task, sub)
+    assert not score.valid and "non-negative" in score.details["reason"]

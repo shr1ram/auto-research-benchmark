@@ -154,7 +154,7 @@ class OpenMLTabular(Benchmark):
             if kind != "regression":
                 probs = merged[expected].to_numpy(dtype=float)
                 sums = probs.sum(axis=1)
-                if (sums <= 0).any():
+                if (probs < 0).any() or (sums <= 0).any():
                     return Score.invalid("class probabilities must be non-negative "
                                          "and sum > 0 per row", is_higher_better=hb)
                 probs = probs / sums[:, None]   # tolerate unnormalised rows
