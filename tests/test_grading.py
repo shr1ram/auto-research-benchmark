@@ -83,15 +83,16 @@ def test_openml_refuses_legacy_leaky_layout(tmp_path):
 
 
 def test_mlebench_private_root_resolution(tmp_path, monkeypatch):
-    """Private-root resolution: env var > `<data_dir>-private` sibling > legacy
-    single root. (No mlebench install needed — resolution is pure path logic.)"""
+    """Private-root resolution: env var > `<data_dir>-private` sibling > NONE
+    (legacy single-root removed — answers must never live in the public tree).
+    No mlebench install needed — resolution is pure path logic."""
     monkeypatch.delenv("MLEBENCH_PRIVATE_DATA_DIR", raising=False)
     pub = tmp_path / "mlebench-data"
     pub.mkdir()
 
-    legacy = MLEBenchLite(data_dir=str(pub))       # no sibling, no env: legacy
-    assert legacy.private_data_dir == legacy.data_dir
-    assert not legacy._firewalled()
+    bare = MLEBenchLite(data_dir=str(pub))         # no sibling, no env
+    assert bare.private_data_dir is None           # legacy single-root REMOVED
+    assert not bare._firewalled()
 
     sibling = tmp_path / "mlebench-data-private"   # sibling appears: autodetect
     sibling.mkdir()
@@ -105,3 +106,20 @@ def test_mlebench_private_root_resolution(tmp_path, monkeypatch):
     env_fw = MLEBenchLite(data_dir=str(pub))
     assert env_fw.private_data_dir == other
     assert env_fw._firewalled()
+
+
+def test_mlebench_refuses_to_run_without_a_private_root(tmp_path, monkeypatch):
+    """The legacy single-root fallback is gone: answers in the agent-bindable
+    tree would silently void the firewall."""
+    monkeypatch.delenv("MLEBENCH_PRIVATE_DATA_DIR", raising=False)
+    bench = MLEBenchLite(data_dir=str(tmp_path / "nothing-private-here"))
+    assert bench.private_data_dir is None
+    with pytest.raises(RuntimeError, match="private data root"):
+        bench.load_task("random-acts-of-pizza")
+    # pointing the private root AT the public root is the same leak (cubic)
+    pub = tmp_path / "pub"
+    pub.mkdir()
+    monkeypatch.setenv("MLEBENCH_PRIVATE_DATA_DIR", str(pub))
+    same = MLEBenchLite(data_dir=str(pub))
+    with pytest.raises(RuntimeError, match="SEPARATE private data root"):
+        same.load_task("random-acts-of-pizza")

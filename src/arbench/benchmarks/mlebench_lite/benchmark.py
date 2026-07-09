@@ -60,16 +60,17 @@ class MLEBenchLite(Benchmark):
         self.data_dir = Path(
             data_dir or os.environ.get("MLEBENCH_DATA_DIR", "")
         ) if (data_dir or os.environ.get("MLEBENCH_DATA_DIR")) else None
-        # Grader-only root holding each task's prepared/private split (see module
-        # docstring). Resolution: explicit arg > env > `<data_dir>-private` if it
-        # exists > legacy single root (= data_dir).
+        # Grader-only root holding each task's private split. Resolution:
+        # explicit arg > env > sibling `<data_dir>-private`. There is NO
+        # single-root fallback: answers living in the agent-bindable tree
+        # would silently void the mount-level firewall (removed 2026-07-08).
         priv = private_data_dir or os.environ.get("MLEBENCH_PRIVATE_DATA_DIR", "")
         if priv:
             self.private_data_dir = Path(priv)
         elif self.data_dir is not None and Path(f"{self.data_dir}-private").is_dir():
             self.private_data_dir = Path(f"{self.data_dir}-private")
         else:
-            self.private_data_dir = self.data_dir  # legacy: everything in one root
+            self.private_data_dir = None
 
     def _registry(self):
         registry, _ = _require_mlebench()
@@ -81,6 +82,16 @@ class MLEBenchLite(Benchmark):
         tree. Falls back to the public registry in legacy single-root mode."""
         registry, _ = _require_mlebench()
         return registry.set_data_dir(self.private_data_dir) if self.private_data_dir else registry
+
+    def _require_private_root(self) -> None:
+        same_root = (self.private_data_dir is not None
+                     and self.data_dir is not None
+                     and self.private_data_dir.resolve() == self.data_dir.resolve())
+        if self.private_data_dir is None or same_root:
+            raise RuntimeError(
+                "no SEPARATE private data root: set MLEBENCH_PRIVATE_DATA_DIR (or "
+                "create the sibling '<data_dir>-private') — the legacy single-root "
+                "mode was removed; answers must never live in the agent-bindable tree")
 
     def _firewalled(self) -> bool:
         return (self.private_data_dir is not None
@@ -96,6 +107,7 @@ class MLEBenchLite(Benchmark):
         return ordered
 
     def load_task(self, task_id: str) -> Task:
+        self._require_private_root()
         comp = self._registry().get_competition(task_id)
         public_dir = Path(comp.public_dir)
         if not public_dir.exists():
@@ -138,6 +150,7 @@ class MLEBenchLite(Benchmark):
         )
 
     def grade(self, task: Task, submission_path: Path) -> Score:
+        self._require_private_root()
         registry, grade_csv = _require_mlebench()
         # Grade against the PRIVATE root: mlebench derives answers/private_dir
         # from its Registry's data_dir, and grade_csv only touches the private
