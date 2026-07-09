@@ -141,7 +141,12 @@ class OpenMLTabular(Benchmark):
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())
             return False, f"submission missing predictions for {n} test rows"
-        if kind != "regression":
+        if kind == "regression":
+            try:
+                merged["prediction"].to_numpy(dtype=float)
+            except Exception as e:  # noqa: BLE001
+                return False, f"predictions must be numeric: {e}"
+        else:
             try:
                 probs = merged[expected].to_numpy(dtype=float)
             except Exception as e:  # noqa: BLE001

@@ -156,7 +156,9 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
     classes = None
     sample = test_full[["row_id"]].copy()
     if spec.kind == "regression":
-        sample["prediction"] = float(df[target].mean())
+        # TRAIN mean only — the full-column mean would fold the heldout
+        # labels' aggregate into a public file (cubic, PR #9)
+        sample["prediction"] = float(train[target].mean())
     else:
         classes = sorted(map(str, pd.unique(df[target].dropna())))
         if any(c == "row_id" for c in classes):

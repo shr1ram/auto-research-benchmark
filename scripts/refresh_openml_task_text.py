@@ -46,8 +46,7 @@ def refresh_one(prep: Path, answers_csv: Path) -> dict:
     test_ids = pd.read_csv(prep / "test.csv", usecols=[meta["id_col"]])
     sample = test_ids.copy()
     if kind == "regression":
-        # match prepare_one's neutral value as closely as possible without the
-        # full df: the train-split mean (prepare uses the full-column mean)
+        # same neutral value as prepare_one: the TRAIN-split mean
         sample["prediction"] = float(
             pd.read_csv(prep / "train.csv", usecols=[target])[target].mean())
     else:

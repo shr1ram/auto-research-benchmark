@@ -141,6 +141,13 @@ def test_openml_regression_contract_unchanged(tmp_path):
                   "prediction": [4.0, 5.0, 6.0]}).to_csv(sub, index=False)
     score = bench.grade(task, sub)
     assert score.valid and score.value == 0.0
+    # non-numeric predictions: validate must agree with grade (cubic, PR #9)
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "prediction": ["high", "low", "mid"]}).to_csv(sub, index=False)
+    ok, reason = bench.validate_submission(task, sub)
+    score = bench.grade(task, sub)
+    assert not ok and "numeric" in reason
+    assert not score.valid
 
 
 def test_openml_rejects_wrong_columns(tmp_path):
