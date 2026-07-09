@@ -7,8 +7,8 @@ minio parquet endpoint — no `openml` pip dep), then write a fixed, seeded spli
         train.csv        # features + target  (the agent trains on this; may self-split for CV)
         test.csv         # features only       (the agent predicts these -> submission.csv)
         sample_submission.csv
-        description.md    # goal text for the Task
-        meta.json         # {metric, higher_better, kind, target, id_col, dataset_id, n_train, n_test}
+        description.md    # OpenML's own dataset prose + the fixed submission contract
+        meta.json         # {metric, higher_better, kind, target, id_col, classes, dataset_id, ...}
     $OPENML_PRIVATE_DATA_DIR/<task_id>/          # <- grader-only, SEPARATE private tree
         answers.csv      # id,target           (held-out ground truth)
     (OPENML_PRIVATE_DATA_DIR defaults to the sibling `private/` of the public root,
@@ -45,22 +45,35 @@ except Exception:  # when imported as a module
     from arbench.benchmarks.openml_tabular.tasks import ALL_TASKS, BY_ID  # type: ignore
 
 
-def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str]:
-    """Fetch an OpenML dataset as a DataFrame + its authoritative target column.
+def fetch_openml_description(dataset_id: int) -> str:
+    """The uploader-written dataset description from OpenML, IN FULL — the ONLY
+    per-task prose we hand the agent. Everything else in description.md is a
+    fixed contract; the science prose is all upstream, never authored or
+    edited here."""
+    meta_url = f"https://www.openml.org/api/v1/json/data/{dataset_id}"
+    with urllib.request.urlopen(meta_url, timeout=60) as r:
+        meta = json.load(r)["data_set_description"]
+    return (meta.get("description") or "").strip()
+
+
+def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str, str]:
+    """Fetch an OpenML dataset as a DataFrame + its authoritative target column
+    + the uploader's dataset description.
 
     OpenML serves dataset metadata as JSON (which gives the data file URL — ARFF
     or parquet — AND `default_target_attribute`, the canonical target). We use the
     metadata target rather than trusting a hand-written guess. Parquet preferred.
-    Returns (df, default_target_attribute).
+    Returns (df, default_target_attribute, description).
     """
     meta_url = f"https://www.openml.org/api/v1/json/data/{dataset_id}"
     with urllib.request.urlopen(meta_url, timeout=60) as r:
         meta = json.load(r)["data_set_description"]
     default_target = (meta.get("default_target_attribute") or "").strip()
+    description = (meta.get("description") or "").strip()
     parquet_url = meta.get("parquet_url")
     if parquet_url:
         with urllib.request.urlopen(parquet_url, timeout=300) as r:
-            return pd.read_parquet(io.BytesIO(r.read())), default_target
+            return pd.read_parquet(io.BytesIO(r.read())), default_target, description
     # fallback: ARFF via scipy
     arff_url = meta["url"]
     from scipy.io import arff
@@ -71,7 +84,39 @@ def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str]:
     for c in df.columns:
         if df[c].dtype == object:
             df[c] = df[c].str.decode("utf-8", "replace") if hasattr(df[c], "str") else df[c]
-    return df, default_target
+    return df, default_target, description
+
+
+def build_description(task_id: str, upstream: str, kind: str, dataset_id: int,
+                      target: str, metric: str, higher_better: bool) -> str:
+    """description.md = [upstream OpenML prose] + [fixed contract]. The contract
+    is one template per task KIND with zero per-task content beyond metadata
+    facts (target/metric names). sample_submission.csv is the mechanical anchor
+    for the expected columns, so no convention is left unstated (the smoke-e2e
+    P(positive) orientation bug)."""
+    if kind == "regression":
+        contract = (
+            "- Write `submission.csv` with EXACTLY the columns of "
+            "`sample_submission.csv`: `row_id,prediction`, one row per test "
+            "row (same `row_id`s), `prediction` = the predicted value.\n"
+        )
+    else:
+        contract = (
+            "- Write `submission.csv` with EXACTLY the columns of "
+            "`sample_submission.csv`: `row_id` plus one probability column per "
+            "class, each named by its class value, one row per test row (same "
+            "`row_id`s); each row's probabilities should sum to 1.\n"
+        )
+    return (
+        f"# {task_id}\n\n"
+        + (f"{upstream}\n\n---\n\n" if upstream else "")
+        + f"Tabular {kind} task (OpenML dataset {dataset_id}).\n\n"
+        f"- Train on `train.csv` (columns include the target `{target}` and `row_id`).\n"
+        f"- Predict for every row in `test.csv` (features only; has `row_id`, no target).\n"
+        + contract
+        + f"- Metric: **{metric}** ({'higher' if higher_better else 'lower'} is better), "
+        f"computed on the hidden labels of `test.csv`.\n"
+    )
 
 
 def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
@@ -79,7 +124,7 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     private = private_root / spec.task_id   # grader-only, outside the public tree
     private.mkdir(parents=True, exist_ok=True)
-    df, default_target = _download_openml_csv(spec.dataset_id)
+    df, default_target, upstream_desc = _download_openml_csv(spec.dataset_id)
     # Prefer OpenML's authoritative default_target_attribute; fall back to the
     # spec's hand-written target only if the metadata didn't name one.
     target = default_target if (default_target and default_target in df.columns) else spec.target
@@ -104,10 +149,20 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
     test_features = test_full.drop(columns=[target])              # agent sees no labels
     answers = test_full[["row_id", target]].copy()                # grader-only
 
-    # sample submission: row_id + a neutral prediction column named 'prediction'
+    # submission contract: classification = one probability column per class
+    # (columns NAMED by class value — no positive-class convention to guess,
+    # and multiclass log_loss gets the per-class probs it needs); regression =
+    # a single `prediction` value column.
+    classes = None
     sample = test_full[["row_id"]].copy()
-    sample["prediction"] = (df[target].mode().iloc[0]
-                            if spec.kind != "regression" else float(df[target].mean()))
+    if spec.kind == "regression":
+        sample["prediction"] = float(df[target].mean())
+    else:
+        classes = sorted(map(str, pd.unique(df[target].dropna())))
+        if any(c == "row_id" for c in classes):
+            raise ValueError(f"class value collides with id column: {classes}")
+        for c in classes:
+            sample[c] = 1.0 / len(classes)
 
     train.to_csv(out / "train.csv", index=False)
     test_features.to_csv(out / "test.csv", index=False)
@@ -122,24 +177,20 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
     meta = {
         "task_id": spec.task_id, "dataset_id": spec.dataset_id,
         "metric": spec.metric, "higher_better": spec.higher_better, "kind": spec.kind,
-        "target": target, "id_col": "row_id",
+        "target": target, "id_col": "row_id", "classes": classes,
         "n_train": int(len(train)), "n_test": int(len(test_features)),
-        "n_features": int(test_features.shape[1] - 1), "note": spec.note,
+        "n_features": int(test_features.shape[1] - 1),
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
 
-    desc = (
-        f"# {spec.task_id}\n\n{spec.note}\n\n"
-        f"Tabular {spec.kind} task from OpenML (dataset {spec.dataset_id}).\n\n"
-        f"- Train on `train.csv` (columns include the target `{target}` and `row_id`).\n"
-        f"- Predict for every row in `test.csv` (features only; has `row_id`, no target).\n"
-        f"- Write `submission.csv` with columns `row_id,prediction` (one row per test row, "
-        f"same `row_id`s).\n"
-        f"- Metric: **{spec.metric}** ({'higher' if spec.higher_better else 'lower'} is better).\n"
-        f"  For roc_auc/log_loss, `prediction` = P(positive) / class-prob; for rmse/accuracy, "
-        f"the predicted value/label.\n"
-    )
-    (out / "description.md").write_text(desc)
+    (out / "description.md").write_text(build_description(
+        spec.task_id, upstream_desc, spec.kind, spec.dataset_id,
+        target, spec.metric, spec.higher_better))
+    # a re-prep is a deliberate data change: drop the trust-on-first-use stamp
+    # so the next load re-pins instead of failing on drift
+    stamp = out / ".data_version"
+    if stamp.exists():
+        stamp.unlink()
     return meta
 
 

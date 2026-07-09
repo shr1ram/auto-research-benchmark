@@ -30,7 +30,8 @@ class OpenMLTaskSpec:
     metric: str             # 'roc_auc' | 'log_loss' | 'rmse' | 'accuracy'
     higher_better: bool
     kind: str               # 'binary' | 'multiclass' | 'regression'
-    note: str = ""          # short human hint
+    provenance: str = ""    # curation record (source suite / original name);
+                            # NEVER reaches prepared data or the agent
     # optional override if OpenML's default target col name differs; else use `target`
     positive_label: Optional[str] = None
 
@@ -42,31 +43,31 @@ class OpenMLTaskSpec:
 # accurate. dataset_ids verified: all 11 downloaded cleanly.
 CLASSIFICATION: list[OpenMLTaskSpec] = [
     OpenMLTaskSpec("credit",            44089, "SeriousDlqin2yrs", "roc_auc", True, "binary",
-                   "credit default; class imbalance + feature interactions"),
+                   "OpenML credit (grinsztajn)"),
     OpenMLTaskSpec("electricity",       44120, "class",  "roc_auc", True,  "binary",
-                   "electricity price up/down; temporal features matter"),
+                   "OpenML electricity (grinsztajn)"),
     OpenMLTaskSpec("covertype",         44121, "Y",      "roc_auc", True,  "binary",
-                   "forest cover (binarised); nonlinear boundaries; LARGE (453k rows)"),
+                   "OpenML covertype (grinsztajn)"),
     OpenMLTaskSpec("pol",               44122, "binaryClass", "roc_auc", True, "binary",
-                   "telecomms; feature selection sensitive"),
+                   "OpenML pol (grinsztajn)"),
     OpenMLTaskSpec("house_16H",         44123, "binaryClass", "roc_auc", True, "binary",
-                   "housing (binarised); scaling + interactions"),
+                   "OpenML house_16H (grinsztajn)"),
     OpenMLTaskSpec("MagicTelescope",    44125, "class",  "roc_auc", True,  "binary",
-                   "gamma vs hadron; class overlap"),
+                   "OpenML MagicTelescope (grinsztajn)"),
     OpenMLTaskSpec("bank-marketing",    44126, "Class",  "roc_auc", True,  "binary",
-                   "term-deposit; strong imbalance -> imbalance moves"),
+                   "OpenML bank-marketing (grinsztajn)"),
     OpenMLTaskSpec("MiniBooNE",         44128, "signal", "roc_auc", True,  "binary",
-                   "particle ID; high-dim (50 feat), standardisation helps"),
+                   "OpenML MiniBooNE (grinsztajn)"),
 ]
 
 # --- OpenML regression (different move-family: target transform, RMSE) ---
 REGRESSION: list[OpenMLTaskSpec] = [
     OpenMLTaskSpec("cpu_activity",      44132, "usr",    "rmse", False, "regression",
-                   "cpu usage; log-target + interactions"),
+                   "OpenML cpu_activity (grinsztajn-reg)"),
     OpenMLTaskSpec("wine_quality",      44136, "quality","rmse", False, "regression",
-                   "wine score; ordinal-ish regression"),
+                   "OpenML wine_quality (grinsztajn-reg)"),
     OpenMLTaskSpec("superconduct",      44148, "criticaltemp", "rmse", False, "regression",
-                   "superconductor Tc; heavy feature engineering pays (79 feat)"),
+                   "OpenML superconduct (grinsztajn-reg)"),
 ]
 
 # --- 2026-07 expansion: OpenML-CC18 + AutoML Benchmark (clf/reg) + CTR23,
