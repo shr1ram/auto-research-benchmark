@@ -247,3 +247,7 @@ def test_validate_submission_default_strips_score(tmp_path):
     sub.write_text("row_id,prediction\n")
     ok, reason = Benchmark.validate_submission(bench, task, sub)
     assert not ok and isinstance(reason, str)
+    # the default NEVER forwards grade()'s own reason/exception text — it can
+    # embed private detail (e.g. the answers path in an IOError); cubic P2
+    assert reason == Benchmark.GENERIC_INVALID
+    assert "answers" not in reason and "/" not in reason

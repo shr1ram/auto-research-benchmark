@@ -36,6 +36,13 @@ class Benchmark(ABC):
         tell a crash apart from a genuinely bad score."""
         raise NotImplementedError
 
+    #: the default validator's only failure reason — grade()'s own reason
+    #: strings and exceptions may embed private detail (answers paths,
+    #: heldout-derived text) and are NEVER forwarded to the agent loop.
+    GENERIC_INVALID = ("submission failed the benchmark's validity check; "
+                       "match the format the task describes (see "
+                       "sample_submission if provided)")
+
     def validate_submission(self, task: Task,
                             submission_path: Path) -> tuple[bool, str | None]:
         """Format-only verdict on a submission: (ok, reason-if-not).
@@ -43,13 +50,16 @@ class Benchmark(ABC):
         This is the ONLY grader output that may cross into a running agent
         loop: everything else grade() produces (value, medals, thresholds,
         percentiles) is heldout-score-derived and firewalled. The default
-        grades and strips; benchmarks whose validity is checkable from PUBLIC
-        data alone should override so the answers file isn't touched per
-        attempt. Never raises; never returns score information."""
+        grades and DISCARDS EVERYTHING but the boolean — including grade()'s
+        reason strings and exception text, which it cannot prove free of
+        private detail (an answers-file path in an IOError would hand the
+        agent the private tree). Benchmarks wanting actionable reasons must
+        override with a check built ONLY from public data (see openml).
+        Never raises; never returns score information."""
         try:
             score = self.grade(task, submission_path)
-        except Exception as e:  # noqa: BLE001 — a validator must never raise
-            return False, f"validation error: {e}"
+        except Exception:  # noqa: BLE001 — a validator must never raise
+            return False, self.GENERIC_INVALID
         if score.valid:
             return True, None
-        return False, score.details.get("reason", "submission invalid")
+        return False, self.GENERIC_INVALID
