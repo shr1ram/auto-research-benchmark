@@ -169,10 +169,10 @@ ALL_TASKS: list[OpenMLTaskSpec] = CLASSIFICATION + REGRESSION + EXPANSION
 
 # Smallest-first for a cheap smoke run (by rough row count).
 SMALL_FIRST: list[str] = [
-    "wine_quality",     # ~6.5k rows, tiny
-    "MagicTelescope",   # ~19k
-    "bank-marketing",   # ~10k, imbalance
-    "credit",           # curated hard
+    "mfeat-factors",         # 2,000 rows (smallest in the pool), multiclass
+    "auction-verification",  # 2,043 rows, regression
+    "kc1",                   # 2,109 rows, binary
+    "quake",                 # 2,178 rows, regression
 ]
 
 BY_ID: dict[str, OpenMLTaskSpec] = {t.task_id: t for t in ALL_TASKS}
