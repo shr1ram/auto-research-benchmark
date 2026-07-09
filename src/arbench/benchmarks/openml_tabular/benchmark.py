@@ -102,11 +102,59 @@ class OpenMLTabular(Benchmark):
                 "kind": meta["kind"],
                 "target": meta["target"],
                 "id_col": meta["id_col"],
+                "classes": meta.get("classes"),
                 "sample_submission": str(prep / "sample_submission.csv"),
                 "data_version": data_version,
                 "split": split_of(self.name, task_id),
             },
         )
+
+    def validate_submission(self, task: Task,
+                            submission_path: Path) -> tuple[bool, str | None]:
+        """PUBLIC-data-only mirror of grade()'s validity gates (columns from
+        meta, row ids from test.csv) — the per-attempt loop check never opens
+        the answers file. Agreement with grade() is pinned by test."""
+        meta = task.metadata
+        id_col, kind = meta["id_col"], meta.get("kind")
+        try:
+            import pandas as pd
+            sub = pd.read_csv(submission_path)
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not read submission: {e}"
+        if kind == "regression":
+            expected = ["prediction"]
+        else:
+            expected = list(meta.get("classes") or [])
+            if not expected:
+                return False, ("meta.json has no classes for a classification "
+                               "task — re-run prepare/refresh for this task")
+        missing = [c for c in [id_col] + expected if c not in sub.columns]
+        if missing:
+            return False, (f"submission must have columns {[id_col] + expected}; "
+                           f"missing {missing} (got {list(sub.columns)})")
+        try:
+            test_ids = pd.read_csv(task.data_dir / "test.csv", usecols=[id_col])
+        except Exception as e:  # noqa: BLE001
+            return False, f"could not read test.csv ids: {e}"
+        sub = sub.drop_duplicates(subset=[id_col])
+        merged = test_ids.merge(sub[[id_col] + expected], on=id_col, how="left")
+        if merged[expected].isna().any().any():
+            n = int(merged[expected].isna().any(axis=1).sum())
+            return False, f"submission missing predictions for {n} test rows"
+        if kind == "regression":
+            try:
+                merged["prediction"].to_numpy(dtype=float)
+            except Exception as e:  # noqa: BLE001
+                return False, f"predictions must be numeric: {e}"
+        else:
+            try:
+                probs = merged[expected].to_numpy(dtype=float)
+            except Exception as e:  # noqa: BLE001
+                return False, f"class probabilities must be numeric: {e}"
+            if (probs < 0).any() or (probs.sum(axis=1) <= 0).any():
+                return False, ("class probabilities must be non-negative "
+                               "and sum > 0 per row")
+        return True, None
 
     def grade(self, task: Task, submission_path: Path) -> Score:
         meta = task.metadata
@@ -119,39 +167,64 @@ class OpenMLTabular(Benchmark):
         except Exception as e:
             return Score.invalid(f"could not read submission/answers: {e}", is_higher_better=hb)
 
-        id_col, target = meta["id_col"], meta["target"]
-        if id_col not in sub.columns or "prediction" not in sub.columns:
+        id_col, target, metric = meta["id_col"], meta["target"], meta["metric"]
+        kind = meta.get("kind")
+
+        # expected columns come from the contract, mechanically: regression =
+        # [id, prediction]; classification = [id] + one probability column per
+        # class, NAMED by class value (sample_submission.csv shows the same) —
+        # no positive-class convention exists to get wrong.
+        if kind == "regression":
+            expected = ["prediction"]
+        else:
+            expected = list(meta.get("classes") or [])
+            if not expected:
+                return Score.invalid(
+                    "meta.json has no classes for a classification task — "
+                    "re-run prepare/refresh for this task", is_higher_better=hb)
+        missing = [c for c in [id_col] + expected if c not in sub.columns]
+        if missing:
             return Score.invalid(
-                f"submission must have columns [{id_col}, prediction]; got {list(sub.columns)}",
-                is_higher_better=hb)
+                f"submission must have columns {[id_col] + expected}; "
+                f"missing {missing} (got {list(sub.columns)})", is_higher_better=hb)
         # align on id, guard against dup/missing ids
         sub = sub.drop_duplicates(subset=[id_col])
-        merged = ans.merge(sub[[id_col, "prediction"]], on=id_col, how="left")
-        if merged["prediction"].isna().any():
-            n = int(merged["prediction"].isna().sum())
+        merged = ans.merge(sub[[id_col] + expected], on=id_col, how="left")
+        if merged[expected].isna().any().any():
+            n = int(merged[expected].isna().any(axis=1).sum())
             return Score.invalid(f"submission missing predictions for {n} test rows",
                                  is_higher_better=hb)
 
         y_true = merged[target].values
-        y_pred = merged["prediction"].values
-        metric = meta["metric"]
         try:
             from sklearn.metrics import roc_auc_score, log_loss, mean_squared_error, accuracy_score
+            if kind != "regression":
+                probs = merged[expected].to_numpy(dtype=float)
+                sums = probs.sum(axis=1)
+                if (probs < 0).any() or (sums <= 0).any():
+                    return Score.invalid("class probabilities must be non-negative "
+                                         "and sum > 0 per row", is_higher_better=hb)
+                probs = probs / sums[:, None]   # tolerate unnormalised rows
+                yt = pd.Series(y_true).astype(str)
+                unknown = sorted(set(yt) - set(expected))
+                if unknown:
+                    return Score.invalid(f"answers contain classes {unknown} not in "
+                                         f"meta classes {expected}", is_higher_better=hb)
             if metric == "roc_auc":
-                # y_true may be strings/bools -> factorise to 0/1 (positive = max label)
-                classes = pd.unique(pd.Series(y_true))
-                if len(classes) != 2:
-                    return Score.invalid(f"roc_auc needs 2 classes, got {len(classes)}", is_higher_better=hb)
-                pos = sorted(map(str, classes))[-1]
-                yt = (pd.Series(y_true).astype(str) == pos).astype(int).values
-                val = float(roc_auc_score(yt, y_pred.astype(float)))
+                if len(expected) != 2:
+                    return Score.invalid(f"roc_auc needs 2 classes, got {len(expected)}",
+                                         is_higher_better=hb)
+                pos = expected[-1]   # scored from that class's OWN column
+                val = float(roc_auc_score((yt == pos).astype(int).values,
+                                          probs[:, expected.index(pos)]))
             elif metric == "log_loss":
-                val = float(log_loss(y_true, y_pred))
-            elif metric == "rmse":
-                val = float(mean_squared_error(y_true.astype(float), y_pred.astype(float)) ** 0.5)
+                val = float(log_loss(yt, probs, labels=expected))
             elif metric == "accuracy":
-                val = float(accuracy_score(pd.Series(y_true).astype(str),
-                                           pd.Series(y_pred).astype(str)))
+                pred = pd.Series(np.asarray(expected)[probs.argmax(axis=1)])
+                val = float(accuracy_score(yt, pred))
+            elif metric == "rmse":
+                y_pred = merged["prediction"].values
+                val = float(mean_squared_error(y_true.astype(float), y_pred.astype(float)) ** 0.5)
             else:
                 return Score.invalid(f"unknown metric {metric}", is_higher_better=hb)
         except Exception as e:

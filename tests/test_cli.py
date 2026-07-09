@@ -25,14 +25,14 @@ def _stage_openml(root):
     priv.mkdir(parents=True)
     meta = {"task_id": TASK, "dataset_id": 0, "metric": "accuracy",
             "higher_better": True, "kind": "multiclass", "target": "label",
-            "id_col": "row_id", "n_train": 3, "n_test": 3}
+            "id_col": "row_id", "classes": ["a", "b"], "n_train": 3, "n_test": 3}
     (prep / "meta.json").write_text(json.dumps(meta))
     (prep / "description.md").write_text("# toy task\n")
     pd.DataFrame({"row_id": [0, 1, 2], "x": [1, 2, 3],
                   "label": ["a", "b", "a"]}).to_csv(prep / "train.csv", index=False)
     pd.DataFrame({"row_id": [3, 4, 5], "x": [4, 5, 6]}).to_csv(prep / "test.csv", index=False)
-    pd.DataFrame({"row_id": [3, 4, 5],
-                  "prediction": ["a", "a", "a"]}).to_csv(prep / "sample_submission.csv", index=False)
+    pd.DataFrame({"row_id": [3, 4, 5], "a": [0.5, 0.5, 0.5],
+                  "b": [0.5, 0.5, 0.5]}).to_csv(prep / "sample_submission.csv", index=False)
     pd.DataFrame({"row_id": [3, 4, 5],
                   "label": ["a", "b", "b"]}).to_csv(priv / "answers.csv", index=False)
 
@@ -57,8 +57,8 @@ def test_cli_tasks_lists_ids():
 def test_cli_grade_roundtrip(tmp_path):
     _stage_openml(tmp_path)
     sub = tmp_path / "submission.csv"
-    pd.DataFrame({"row_id": [3, 4, 5],
-                  "prediction": ["a", "b", "b"]}).to_csv(sub, index=False)
+    pd.DataFrame({"row_id": [3, 4, 5], "a": [0.9, 0.1, 0.2],
+                  "b": [0.1, 0.9, 0.8]}).to_csv(sub, index=False)
     result = CliRunner().invoke(main, [
         "grade", "--benchmark", "openml_tabular", "--task", TASK,
         "--data-dir", str(tmp_path / "public"),
@@ -74,7 +74,7 @@ def test_cli_grade_roundtrip(tmp_path):
 def test_cli_grade_invalid_submission_exits_2(tmp_path):
     _stage_openml(tmp_path)
     sub = tmp_path / "submission.csv"
-    sub.write_text("row_id,prediction\n")  # empty predictions -> invalid
+    sub.write_text("row_id,a,b\n")  # empty predictions -> invalid
     result = CliRunner().invoke(main, [
         "grade", "--benchmark", "openml_tabular", "--task", TASK,
         "--data-dir", str(tmp_path / "public"),
