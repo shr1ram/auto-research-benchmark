@@ -45,24 +45,15 @@ except Exception:  # when imported as a module
     from arbench.benchmarks.openml_tabular.tasks import ALL_TASKS, BY_ID  # type: ignore
 
 
-DESCRIPTION_MAX_CHARS = 2000
-
-
-def _clip_description(text: str) -> str:
-    text = (text or "").strip()
-    if len(text) > DESCRIPTION_MAX_CHARS:
-        text = text[:DESCRIPTION_MAX_CHARS].rsplit(None, 1)[0] + " […]"
-    return text
-
-
 def fetch_openml_description(dataset_id: int) -> str:
-    """The uploader-written dataset description from OpenML — the ONLY per-task
-    prose we hand the agent. Everything else in description.md is a fixed
-    contract; the science prose is all upstream, never authored here."""
+    """The uploader-written dataset description from OpenML, IN FULL — the ONLY
+    per-task prose we hand the agent. Everything else in description.md is a
+    fixed contract; the science prose is all upstream, never authored or
+    edited here."""
     meta_url = f"https://www.openml.org/api/v1/json/data/{dataset_id}"
     with urllib.request.urlopen(meta_url, timeout=60) as r:
         meta = json.load(r)["data_set_description"]
-    return _clip_description(meta.get("description"))
+    return (meta.get("description") or "").strip()
 
 
 def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str, str]:
@@ -78,7 +69,7 @@ def _download_openml_csv(dataset_id: int) -> tuple[pd.DataFrame, str, str]:
     with urllib.request.urlopen(meta_url, timeout=60) as r:
         meta = json.load(r)["data_set_description"]
     default_target = (meta.get("default_target_attribute") or "").strip()
-    description = _clip_description(meta.get("description"))
+    description = (meta.get("description") or "").strip()
     parquet_url = meta.get("parquet_url")
     if parquet_url:
         with urllib.request.urlopen(parquet_url, timeout=300) as r:
@@ -188,7 +179,7 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
         "metric": spec.metric, "higher_better": spec.higher_better, "kind": spec.kind,
         "target": target, "id_col": "row_id", "classes": classes,
         "n_train": int(len(train)), "n_test": int(len(test_features)),
-        "n_features": int(test_features.shape[1] - 1), "note": spec.note,
+        "n_features": int(test_features.shape[1] - 1),
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
 

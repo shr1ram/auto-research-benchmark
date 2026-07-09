@@ -57,6 +57,7 @@ def refresh_one(prep: Path, answers_csv: Path) -> dict:
         target, meta["metric"], meta["higher_better"]))
 
     meta["classes"] = classes
+    meta.pop("note", None)   # authored per-task text: deleted entirely
     (prep / "meta.json").write_text(json.dumps(meta, indent=2))
     stamp = prep / ".data_version"
     if stamp.exists():
