@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import math
+
 from pathlib import Path
 from typing import Iterable
 
@@ -141,16 +143,23 @@ class OpenMLTabular(Benchmark):
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())
             return False, f"submission missing predictions for {n} test rows"
+        import numpy as np
         if kind == "regression":
             try:
-                merged["prediction"].to_numpy(dtype=float)
+                preds = merged["prediction"].to_numpy(dtype=float)
             except Exception as e:  # noqa: BLE001
                 return False, f"predictions must be numeric: {e}"
+            if not np.isfinite(preds).all():
+                # grade()'s sklearn metrics raise on inf/nan — accepting them
+                # here was a validate/grade disagreement (review find)
+                return False, "predictions must be finite (no inf/nan)"
         else:
             try:
                 probs = merged[expected].to_numpy(dtype=float)
             except Exception as e:  # noqa: BLE001
                 return False, f"class probabilities must be numeric: {e}"
+            if not np.isfinite(probs).all():
+                return False, "class probabilities must be finite (no inf/nan)"
             if (probs < 0).any() or (probs.sum(axis=1) <= 0).any():
                 return False, ("class probabilities must be non-negative "
                                "and sum > 0 per row")
@@ -230,6 +239,12 @@ class OpenMLTabular(Benchmark):
         except Exception as e:
             return Score.invalid(f"metric computation failed: {e}", is_higher_better=hb)
 
+        if not math.isfinite(val):
+            # roc_auc on single-class truth WARNS and returns nan instead of
+            # raising — a "valid" NaN silently poisons every downstream
+            # ranking that trusts valid=True (review find)
+            return Score.invalid(f"metric {metric} returned non-finite {val!r}",
+                                 is_higher_better=hb)
         return Score(value=val, valid=True, is_higher_better=hb,
                      details={"metric": metric, "kind": meta.get("kind"),
                               "n_test": int(len(merged)),

@@ -276,3 +276,48 @@ def test_mlebench_refuses_to_run_without_a_private_root(tmp_path, monkeypatch):
     same = MLEBenchLite(data_dir=str(pub))
     with pytest.raises(RuntimeError, match="SEPARATE private data root"):
         same.load_task("random-acts-of-pizza")
+
+
+def test_openml_infinite_predictions_rejected_by_validate_and_grade(tmp_path):
+    """inf converted to float cleanly, so validate said ok while grade's
+    sklearn call raised -> Score.invalid: a validate/grade disagreement
+    (subagent review find). Both must now reject, in agreement."""
+    _stage_openml(tmp_path, metric="rmse", kind="regression")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "prediction": [float("inf"), 5.0, 6.0]}).to_csv(sub, index=False)
+    ok, reason = bench.validate_submission(task, sub)
+    assert not ok and "finite" in reason
+    assert not bench.grade(task, sub).valid
+
+
+def test_openml_infinite_probabilities_rejected(tmp_path):
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 4, 5], "a": [float("inf"), 0.5, 0.5],
+                  "b": [0.5, 0.5, 0.5]}).to_csv(sub, index=False)
+    ok, reason = bench.validate_submission(task, sub)
+    assert not ok and "finite" in reason
+
+
+def test_openml_nan_metric_is_invalid_not_valid_nan(tmp_path):
+    """roc_auc on single-class truth WARNS and returns nan (no exception), so
+    it bypassed the except-guard into Score(valid=True, value=nan), silently
+    poisoning downstream rankings (subagent review find)."""
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    # overwrite answers with a single-class truth vector
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "label": ["a", "a", "a"]}).to_csv(
+        tmp_path / "private" / TASK / "answers.csv", index=False)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 4, 5], "a": [0.9, 0.2, 0.4],
+                  "b": [0.1, 0.8, 0.6]}).to_csv(sub, index=False)
+    score = bench.grade(task, sub)
+    assert not score.valid
+    assert "non-finite" in score.details.get("reason", "")
