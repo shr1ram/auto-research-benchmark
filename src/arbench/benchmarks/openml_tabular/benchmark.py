@@ -39,10 +39,13 @@ def _data_root() -> Path | None:
 class OpenMLTabular(Benchmark):
     name = "openml_tabular"
 
-    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None):
+    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None,
+                 enforce_spec: bool = True):
         self.data_dir = Path(data_dir) if data_dir else _data_root()
         priv = private_data_dir or os.environ.get("OPENML_PRIVATE_DATA_DIR", "")
         self.private_dir = Path(priv) if priv else None
+        # tests staging synthetic metas opt out; production never does
+        self.enforce_spec = enforce_spec
 
     def _prepared(self, task_id: str) -> Path:
         if not self.data_dir:
@@ -87,6 +90,19 @@ class OpenMLTabular(Benchmark):
             )
         data_version = verify_data_version(prep)   # loud on drift (plan §2)
         meta = json.loads((prep / "meta.json").read_text())
+        stale = {f: (meta.get(f), getattr(spec, f))
+                 for f in ("metric", "higher_better", "kind", "target")
+                 if meta.get(f) != getattr(spec, f)}
+        if stale and self.enforce_spec:
+            # deployed meta disagreeing with tasks.py means the task text /
+            # grading contract predate a spec change (e.g. the 2026-07-12
+            # multiclass accuracy->log_loss switch) — refuse to serve it on
+            # stale terms; re-prepping is the migration
+            raise RuntimeError(
+                f"task {task_id!r}: prepared meta.json disagrees with tasks.py "
+                f"on {sorted(stale)} ({stale}) — re-run "
+                f"scripts/refresh_openml_task_text.py (the deliberate "
+                f"data_version re-pin) before serving this task")
         goal = (prep / "description.md").read_text()
         goal += (f"\nRead the training data under: {prep}\n"
                  f"Write your submission as submission.csv in your working directory.\n")

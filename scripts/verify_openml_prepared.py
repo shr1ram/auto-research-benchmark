@@ -57,6 +57,10 @@ def audit_task(task_id: str, spec) -> dict:
         row["errors"].append(f"sample columns {list(sample.columns)} != {expected}")
 
     target = meta["target"]
+    missing = [str(f) for f in (prep / "train.csv", ans_path) if not f.exists()]
+    if missing:
+        row["errors"].append(f"missing files: {missing}")
+        return row
     train_y = pd.read_csv(prep / "train.csv", usecols=[target])[target]
     ans_y = pd.read_csv(ans_path, usecols=[target])[target]
     row["n_train"], row["n_test"] = int(len(train_y)), int(len(ans_y))

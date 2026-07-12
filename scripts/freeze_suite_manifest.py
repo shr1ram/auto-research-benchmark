@@ -29,8 +29,14 @@ def main() -> None:
     args = ap.parse_args()
     versions = {}
     if args.audit_json:
-        versions = {r["task_id"]: r.get("data_version")
-                    for r in json.load(open(args.audit_json))}
+        rows = json.load(open(args.audit_json))
+        errored = sorted(r["task_id"] for r in rows if r.get("errors"))
+        if errored:
+            # a manifest must only ever freeze a CLEAN audit — data_versions
+            # of tasks that failed integrity checks are not citable
+            raise SystemExit(f"refusing to freeze: audit has integrity "
+                             f"errors for {errored}")
+        versions = {r["task_id"]: r.get("data_version") for r in rows}
     manifest = {
         "name": args.name,
         "derived_from_suites": {"cc18": 99, "amlb-clf": 271,

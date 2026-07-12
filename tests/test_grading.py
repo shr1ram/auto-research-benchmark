@@ -58,14 +58,19 @@ def _stage_openml(root, legacy_answers: bool = False, metric: str = "accuracy",
 
 
 def _bench(tmp_path):
+    # enforce_spec=False: fixtures stage SYNTHETIC metas for the real
+    # wine_quality id across every kind; the spec guard is pinned by its
+    # own test below
     return OpenMLTabular(data_dir=str(tmp_path / "public"),
-                         private_data_dir=str(tmp_path / "private"))
+                         private_data_dir=str(tmp_path / "private"),
+                         enforce_spec=False)
 
 
 def test_openml_answers_outside_agent_dir(tmp_path):
     prep, priv = _stage_openml(tmp_path)
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
-                          private_data_dir=str(tmp_path / "private"))
+                          private_data_dir=str(tmp_path / "private"),
+                          enforce_spec=False)
     task = bench.load_task(TASK)
     # the agent-visible tree contains no answers file anywhere
     assert task.data_dir == prep
@@ -165,7 +170,8 @@ def test_openml_rejects_wrong_columns(tmp_path):
 def test_openml_refuses_legacy_leaky_layout(tmp_path):
     _stage_openml(tmp_path, legacy_answers=True)
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
-                          private_data_dir=str(tmp_path / "private"))
+                          private_data_dir=str(tmp_path / "private"),
+                          enforce_spec=False)
     with pytest.raises(RuntimeError, match="FIREWALL"):
         bench.load_task(TASK)
 
@@ -363,3 +369,15 @@ def test_prepare_rejects_class_collisions(tmp_path, monkeypatch):
                           "kind": "binary", "provenance": ""})()
     with pytest.raises(ValueError, match="collide"):
         prep.prepare_one(spec, tmp_path / "pub", tmp_path / "priv")
+
+
+def test_load_task_refuses_stale_prepared_metadata(tmp_path):
+    """The migration tripwire (cubic P1 on PR #11): prepared meta.json that
+    disagrees with tasks.py (e.g. multiclass tasks still advertising accuracy
+    after the log_loss switch) must refuse to serve, pointing at the refresh
+    script — deployed data can never silently run on stale terms."""
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")   # wine_quality
+    bench = OpenMLTabular(data_dir=str(tmp_path / "public"),   # is regression
+                          private_data_dir=str(tmp_path / "private"))
+    with pytest.raises(RuntimeError, match="disagrees with tasks.py"):
+        bench.load_task(TASK)

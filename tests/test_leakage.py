@@ -33,7 +33,8 @@ def _toy_openml_tree(root: Path, tid: str = "MagicTelescope") -> tuple[Path, Pat
 
 def test_task_view_contains_no_answers(tmp_path):
     pub, priv = _toy_openml_tree(tmp_path)
-    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv))
+    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv),
+                      enforce_spec=False)
     t = b.load_task("MagicTelescope")
     # check against the actual private ROOT, not the substring "private" —
     # macOS tmp dirs live under /private/var and false-trip a substring check
@@ -46,7 +47,8 @@ def test_task_view_contains_no_answers(tmp_path):
 
 def test_grader_reads_private_tree(tmp_path):
     pub, priv = _toy_openml_tree(tmp_path)
-    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv))
+    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv),
+                      enforce_spec=False)
     assert b._answers("MagicTelescope") == priv / "MagicTelescope" / "answers.csv"
     assert b._answers("MagicTelescope").exists()
 
@@ -54,14 +56,16 @@ def test_grader_reads_private_tree(tmp_path):
 def test_legacy_answers_in_prepared_refused(tmp_path):
     pub, priv = _toy_openml_tree(tmp_path)
     (pub / "MagicTelescope" / "prepared" / "answers.csv").write_text("id,y\n")
-    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv))
+    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv),
+                      enforce_spec=False)
     with pytest.raises(RuntimeError, match="FIREWALL"):
         b.load_task("MagicTelescope")
 
 
 def test_render_goal_rewrites_host_paths(tmp_path):
     pub, priv = _toy_openml_tree(tmp_path)
-    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv))
+    b = OpenMLTabular(data_dir=str(pub), private_data_dir=str(priv),
+                      enforce_spec=False)
     t = b.load_task("MagicTelescope")
     rendered = t.render_goal("/data")
     assert str(t.data_dir) not in rendered
@@ -91,7 +95,7 @@ def test_live_openml_public_root_has_zero_answer_files():
 
 @pytest.mark.skipif(not _OPENML, reason="OPENML_DATA_DIR not set (live data check)")
 def test_live_openml_served_tasks_are_clean():
-    b = OpenMLTabular()
+    b = OpenMLTabular(enforce_spec=False)
     for tid in b.list_tasks():
         if not (b._prepared(tid) / "meta.json").exists():
             continue

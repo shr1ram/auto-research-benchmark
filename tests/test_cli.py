@@ -23,18 +23,21 @@ def _stage_openml(root):
     prep.mkdir(parents=True)
     priv = root / "private" / TASK
     priv.mkdir(parents=True)
-    meta = {"task_id": TASK, "dataset_id": 0, "metric": "accuracy",
-            "higher_better": True, "kind": "multiclass", "target": "label",
-            "id_col": "row_id", "classes": ["a", "b"], "n_train": 3, "n_test": 3}
+    # SPEC-CONSISTENT with tasks.py (wine_quality: regression, rmse,
+    # target "quality") — the CLI constructs the bench with enforce_spec on,
+    # which is exactly what these tests should exercise
+    meta = {"task_id": TASK, "dataset_id": 0, "metric": "rmse",
+            "higher_better": False, "kind": "regression", "target": "quality",
+            "id_col": "row_id", "classes": None, "n_train": 3, "n_test": 3}
     (prep / "meta.json").write_text(json.dumps(meta))
     (prep / "description.md").write_text("# toy task\n")
     pd.DataFrame({"row_id": [0, 1, 2], "x": [1, 2, 3],
-                  "label": ["a", "b", "a"]}).to_csv(prep / "train.csv", index=False)
+                  "quality": [5.0, 6.0, 5.0]}).to_csv(prep / "train.csv", index=False)
     pd.DataFrame({"row_id": [3, 4, 5], "x": [4, 5, 6]}).to_csv(prep / "test.csv", index=False)
-    pd.DataFrame({"row_id": [3, 4, 5], "a": [0.5, 0.5, 0.5],
-                  "b": [0.5, 0.5, 0.5]}).to_csv(prep / "sample_submission.csv", index=False)
     pd.DataFrame({"row_id": [3, 4, 5],
-                  "label": ["a", "b", "b"]}).to_csv(priv / "answers.csv", index=False)
+                  "prediction": [0.0, 0.0, 0.0]}).to_csv(prep / "sample_submission.csv", index=False)
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "quality": [4.0, 5.0, 6.0]}).to_csv(priv / "answers.csv", index=False)
 
 
 def test_get_benchmark_unknown_name_raises():
@@ -57,8 +60,8 @@ def test_cli_tasks_lists_ids():
 def test_cli_grade_roundtrip(tmp_path):
     _stage_openml(tmp_path)
     sub = tmp_path / "submission.csv"
-    pd.DataFrame({"row_id": [3, 4, 5], "a": [0.9, 0.1, 0.2],
-                  "b": [0.1, 0.9, 0.8]}).to_csv(sub, index=False)
+    pd.DataFrame({"row_id": [3, 4, 5],
+                  "prediction": [4.0, 5.0, 6.0]}).to_csv(sub, index=False)
     result = CliRunner().invoke(main, [
         "grade", "--benchmark", "openml_tabular", "--task", TASK,
         "--data-dir", str(tmp_path / "public"),
@@ -68,13 +71,13 @@ def test_cli_grade_roundtrip(tmp_path):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["valid"] is True
-    assert payload["value"] == 1.0
+    assert payload["value"] == 0.0          # exact predictions -> rmse 0
 
 
 def test_cli_grade_invalid_submission_exits_2(tmp_path):
     _stage_openml(tmp_path)
     sub = tmp_path / "submission.csv"
-    sub.write_text("row_id,a,b\n")  # empty predictions -> invalid
+    sub.write_text("row_id,prediction\n")  # empty predictions -> invalid
     result = CliRunner().invoke(main, [
         "grade", "--benchmark", "openml_tabular", "--task", TASK,
         "--data-dir", str(tmp_path / "public"),
