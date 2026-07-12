@@ -2,9 +2,9 @@
 #
 # Same rules as the other plugins: ONLY checkable facts — family +
 # exclusions with reasons; roles are computed by arbench.assign_roles,
-# never stored. family `code` is the far-domain coding bin from the
-# roadmap: same modality as the agent's own output (Python programs),
-# different discipline entirely. `subset: lite` marks the official
+# never stored. family `code` is a MODALITY fact, not a distance label —
+# near/far grouping is assigned at analysis time, relative to wherever the
+# banks were built (plan §2). `subset: lite` marks the official
 # ALE-Bench Lite ten (problem_ids_lite.txt) — the cheap starter set.
 benchmark: ale_bench
 tasks:

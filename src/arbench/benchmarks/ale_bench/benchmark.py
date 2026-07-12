@@ -1,8 +1,11 @@
 """ALE-Bench plugin: AtCoder Heuristic Contest problems as arbench Tasks.
 
-The far-domain coding bin from the benchmark plan §2 roadmap: score-based
+An alternative benchmark, selectable like any other: score-based
 optimisation problems with no perfect solution — score-guided improvement IS
 the task, which is exactly the shape our draft→debug→improve loop optimises.
+Task distance is NOT baked in here: family `code` is a modality fact, and
+near/far grouping is assigned at ANALYSIS time, relative to wherever the
+banks were built (benchmark plan §2 — distance is benchmark-relational).
 Full 40-problem set; `tasks.LITE_PROBLEMS` is the official cheap subset for
 task selection (splits.yaml marks its members `subset: lite`).
 
