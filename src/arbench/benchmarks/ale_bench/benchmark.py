@@ -1,16 +1,19 @@
-"""ALE-Bench Lite plugin: AtCoder Heuristic Contest problems as arbench Tasks.
+"""ALE-Bench plugin: AtCoder Heuristic Contest problems as arbench Tasks.
 
 The far-domain coding bin from the benchmark plan §2 roadmap: score-based
 optimisation problems with no perfect solution — score-guided improvement IS
 the task, which is exactly the shape our draft→debug→improve loop optimises.
+Full 40-problem set; `tasks.LITE_PROBLEMS` is the official cheap subset for
+task selection (splits.yaml marks its members `subset: lite`).
 
 Layout (public tree only — see FIREWALL below):
 
     $ALE_DATA_DIR/<problem_id>/prepared/
         problem.md        # official statement (EN) + our submission contract
         meta.json         # {problem_id, score_type, judge_version,
-                          #  n_public_cases, public_seeds, ...}
-        cases/<seed>.txt  # the Lite PUBLIC input cases (5 per problem)
+                          #  n_public_cases, public_seeds, seed_regime, ...}
+        cases/<seed>.txt  # the staged PUBLIC input cases
+        .data_version     # trust-on-first-use stamp (core/data_version.py)
 
 Submission contract: `submission.py` — a single-file Python 3 program that
 reads ONE input case from stdin and writes the answer to stdout. The agent's
@@ -20,10 +23,14 @@ of the statement), and reports the mean as its proxy score (negated for
 minimise problems: higher is always better).
 
 Grading: `session.private_eval` from the `ale-bench` package (Sakana AI) —
-the OFFICIAL judge over hidden cases derived from private seeds. Heavy
-dependency, deliberately optional (`uv sync --extra ale`) and Docker-backed:
-grading runs where Docker exists (dev machine), not on the Singularity-only
-boxes; a missing judge grades Score.invalid, loudly.
+the OFFICIAL judge over hidden cases derived from private seeds. Seed regime
+is a constructor knob: `full_seeds=False` (default) grades on the package's
+lite seed set (10% of private seeds — tractable), `full_seeds=True` on the
+full contest seed set (plus rank/performance). The regime is recorded in
+Score.details; regimes are NOT comparable across runs. The dependency is
+deliberately optional (`uv sync --extra ale`, pinned commit) and
+Docker-backed: grading runs where Docker exists (dev machine), not on the
+Singularity-only boxes; a missing judge grades Score.invalid, loudly.
 
 FIREWALL: nothing private is ever staged — hidden cases exist only inside
 ale-bench's own data cache (default ~/.cache/ale-bench, or $ALE_BENCH_DATA),
@@ -37,14 +44,14 @@ import ast
 import json
 import os
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator
 
 from arbench.core.benchmark import Benchmark
-from arbench.core.data_version import compute_data_version
+from arbench.core.data_version import verify_data_version
 from arbench.core.result import Score
 from arbench.core.task import Task
 
-from arbench.benchmarks.ale_bench_lite.tasks import LITE_PROBLEMS
+from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS
 
 #: AtCoder's submission size limit is 512 KiB; enforce the same
 MAX_SUBMISSION_BYTES = 512 * 1024
@@ -66,30 +73,39 @@ _CONTRACT = """
 """
 
 
-class ALEBenchLite(Benchmark):
-    name = "ale_bench_lite"
+class ALEBench(Benchmark):
+    name = "ale_bench"
 
-    def __init__(self, data_dir: str | None = None, session_factory=None):
+    def __init__(self, data_dir: str | None = None,
+                 private_data_dir: str | None = None,
+                 session_factory=None, full_seeds: bool = False):
         root = data_dir or os.environ.get("ALE_DATA_DIR", "")
         self.data_dir = Path(root) if root else None
+        # accepted for get_benchmark(**kwargs) parity, but there IS no private
+        # tree: hidden cases live only in ale-bench's grader-side cache
+        if private_data_dir:
+            raise ValueError(
+                "ale_bench has no private data tree — hidden cases live in "
+                "ale-bench's own cache; do not pass private_data_dir")
+        self.full_seeds = full_seeds
         # tests inject a fake; the default lazily imports ale-bench at grade
         self._session_factory = session_factory
 
     # ------------------------------------------------------------- tasks
 
     def list_tasks(self) -> Iterator[str]:
-        yield from LITE_PROBLEMS
+        yield from ALL_PROBLEMS
 
     def _prepared(self, task_id: str) -> Path:
         if not self.data_dir:
             raise RuntimeError("ALE_DATA_DIR not set (point it at the prepared "
-                               "ale_bench_lite public root).")
+                               "ale_bench public root).")
         return self.data_dir / task_id / "prepared"
 
     def load_task(self, task_id: str) -> Task:
-        if task_id not in LITE_PROBLEMS:
-            raise RuntimeError(f"unknown ale_bench_lite task {task_id!r}; "
-                               f"have {sorted(LITE_PROBLEMS)}")
+        if task_id not in ALL_PROBLEMS:
+            raise RuntimeError(f"unknown ale_bench task {task_id!r}; "
+                               f"have {sorted(ALL_PROBLEMS)}")
         prep = self._prepared(task_id)
         if not (prep / "meta.json").exists():
             raise RuntimeError(
@@ -97,7 +113,7 @@ class ALEBenchLite(Benchmark):
                 f"Prepare it (needs the `ale` extra + Docker):  "
                 f"python scripts/prepare_ale_bench.py {task_id}")
         meta = json.loads((prep / "meta.json").read_text())
-        data_version = compute_data_version(prep)
+        data_version = verify_data_version(prep)   # loud on drift (plan §2)
         score_type = meta["score_type"]                 # minimize | maximize
         time_note = (f"time limit {meta['time_limit_s']}s per case"
                      if meta.get("time_limit_s") else "per-case time limit in "
@@ -119,6 +135,7 @@ class ALEBenchLite(Benchmark):
             metadata={"score_type": score_type,
                       "judge_version": meta.get("judge_version"),
                       "n_public_cases": meta.get("n_public_cases"),
+                      "staged_seed_regime": meta.get("seed_regime"),
                       "data_version": data_version,
                       "split": meta.get("split")},
         )
@@ -127,11 +144,11 @@ class ALEBenchLite(Benchmark):
 
     def validate_submission(self, task: Task, submission_path: Path):
         """FORMAT-only (the sole grader output allowed into a running loop):
-        file exists, non-empty, within AtCoder's size limit, parses as
-        Python. Never touches ale-bench or anything private."""
+        a regular, non-empty, size-capped file that parses as Python. Never
+        touches ale-bench or anything private."""
         p = Path(submission_path)
-        if not p.exists():
-            return False, "submission.py not found in the workspace"
+        if not p.is_file():
+            return False, "submission.py is missing or not a regular file"
         size = p.stat().st_size
         if size == 0:
             return False, "submission.py is empty"
@@ -139,7 +156,11 @@ class ALEBenchLite(Benchmark):
             return False, (f"submission.py is {size} bytes; the judge caps "
                            f"submissions at {MAX_SUBMISSION_BYTES}")
         try:
-            ast.parse(p.read_text(errors="replace"))
+            code = p.read_text(errors="replace")
+        except OSError as e:
+            return False, f"submission.py is unreadable: {e.__class__.__name__}"
+        try:
+            ast.parse(code)
         except SyntaxError as e:
             return False, f"submission.py is not valid Python: {e.msg} " \
                           f"(line {e.lineno})"
@@ -151,16 +172,18 @@ class ALEBenchLite(Benchmark):
         if self._session_factory is not None:
             return self._session_factory(task_id)
         import ale_bench   # the `ale` extra; needs a Docker host
-        return ale_bench.start(problem_id=task_id, lite_version=True,
+        return ale_bench.start(problem_id=task_id,
+                               lite_version=not self.full_seeds,
                                run_visualization_server=False)
 
     def grade(self, task: Task, submission_path: Path) -> Score:
         meta = task.metadata
         hb = meta.get("score_type") == "maximize"
-        p = Path(submission_path)
-        if not p.exists():
-            return Score.invalid("submission.py not found", is_higher_better=hb)
-        code = p.read_text(errors="replace")
+        try:
+            code = Path(submission_path).read_text(errors="replace")
+        except OSError as e:   # missing, unreadable, or a directory
+            return Score.invalid(f"submission.py unreadable: "
+                                 f"{e.__class__.__name__}", is_higher_better=hb)
         try:
             session = self._session(task.task_id)
         except Exception as e:  # noqa: BLE001 — missing extra / no Docker
@@ -174,6 +197,7 @@ class ALEBenchLite(Benchmark):
             details = {"judge_result": str(result.overall_judge_result),
                        "n_cases": len(result.case_results),
                        "rank": rank, "performance": performance,
+                       "seed_regime": "full" if self.full_seeds else "lite",
                        "score_type": meta.get("score_type")}
         except Exception as e:  # noqa: BLE001 — judge is external
             return Score.invalid(f"private_eval failed: {type(e).__name__}: {e}",

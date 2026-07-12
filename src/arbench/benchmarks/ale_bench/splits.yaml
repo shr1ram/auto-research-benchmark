@@ -1,0 +1,50 @@
+# Split metadata for ale_bench (benchmark plan §2).
+#
+# Same rules as the other plugins: ONLY checkable facts — family +
+# exclusions with reasons; roles are computed by arbench.assign_roles,
+# never stored. family `code` is the far-domain coding bin from the
+# roadmap: same modality as the agent's own output (Python programs),
+# different discipline entirely. `subset: lite` marks the official
+# ALE-Bench Lite ten (problem_ids_lite.txt) — the cheap starter set.
+benchmark: ale_bench
+tasks:
+  ahc001: {family: code, kind: optimization}
+  ahc002: {family: code, kind: optimization}
+  ahc003: {family: code, kind: optimization}
+  ahc004: {family: code, kind: optimization}
+  ahc005: {family: code, kind: optimization}
+  future-contest-2022-qual: {family: code, kind: optimization}
+  ahc006: {family: code, kind: optimization}
+  ahc007: {family: code, kind: optimization}
+  ahc008: {family: code, kind: optimization, subset: lite}
+  ahc009: {family: code, kind: optimization}
+  ahc010: {family: code, kind: optimization}
+  ahc011: {family: code, kind: optimization, subset: lite}
+  ahc012: {family: code, kind: optimization}
+  ahc014: {family: code, kind: optimization}
+  ahc015: {family: code, kind: optimization, subset: lite}
+  ahc016: {family: code, kind: optimization, subset: lite}
+  ahc017: {family: code, kind: optimization}
+  ahc019: {family: code, kind: optimization}
+  ahc020: {family: code, kind: optimization}
+  ahc021: {family: code, kind: optimization}
+  toyota2023summer-final: {family: code, kind: optimization}
+  ahc024: {family: code, kind: optimization, subset: lite}
+  ahc025: {family: code, kind: optimization, subset: lite}
+  ahc026: {family: code, kind: optimization, subset: lite}
+  ahc027: {family: code, kind: optimization, subset: lite}
+  ahc028: {family: code, kind: optimization}
+  ahc030: {family: code, kind: optimization}
+  ahc031: {family: code, kind: optimization}
+  ahc032: {family: code, kind: optimization}
+  ahc033: {family: code, kind: optimization}
+  ahc034: {family: code, kind: optimization}
+  ahc035: {family: code, kind: optimization}
+  ahc038: {family: code, kind: optimization}
+  ahc039: {family: code, kind: optimization, subset: lite}
+  ahc040: {family: code, kind: optimization}
+  ahc041: {family: code, kind: optimization}
+  ahc042: {family: code, kind: optimization}
+  ahc044: {family: code, kind: optimization}
+  ahc045: {family: code, kind: optimization}
+  ahc046: {family: code, kind: optimization, subset: lite}

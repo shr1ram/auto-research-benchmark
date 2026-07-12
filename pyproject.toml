@@ -25,9 +25,9 @@ dependencies = [
 #   [tool.uv.sources]; the checkout itself is gitignored — vendor/README.md)
 mlebench = ["mlebench"]
 # ALE-Bench judge (Sakana AI) — grading host only: needs Docker; the boxes
-# are Singularity-only, so ale_bench_lite grades on a dev machine.
+# are Singularity-only, so ale_bench grades on a dev machine.
 #   uv sync --extra ale
-ale = ["ale-bench @ git+https://github.com/SakanaAI/ALE-Bench.git"]
+ale = ["ale-bench @ git+https://github.com/SakanaAI/ALE-Bench.git@8ae5b832227e50729f7673f248565c319c301264"]
 dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
 
 [project.scripts]
@@ -42,6 +42,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "arbench.benchmarks.openml_tabular" = ["splits.yaml"]
 "arbench.benchmarks.mlebench_lite" = ["splits.yaml"]
+"arbench.benchmarks.ale_bench" = ["splits.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
