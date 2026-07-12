@@ -34,7 +34,7 @@ def test_families_exclude_the_excluded_with_reasons():
 def test_families_are_yaml_defined_not_hardcoded():
     """Add/remove families by editing the yaml — the code derives everything."""
     fams = families()
-    assert set(fams) == {"tabular", "text", "vision", "other"}
+    assert set(fams) == {"tabular", "text", "vision", "other", "code"}
     benchmarks_in_tabular = {b for b, _ in fams["tabular"]}
     assert benchmarks_in_tabular == {"openml_tabular", "mlebench_lite"}
     assert fams["other"] == [("mlebench_lite", "mlsp-2013-birds")]

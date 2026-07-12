@@ -24,6 +24,10 @@ dependencies = [
 #   uv sync --extra mlebench   (editable path dep on vendor/mle-bench, see
 #   [tool.uv.sources]; the checkout itself is gitignored — vendor/README.md)
 mlebench = ["mlebench"]
+# ALE-Bench judge (Sakana AI) — grading host only: needs Docker; the boxes
+# are Singularity-only, so ale_bench_lite grades on a dev machine.
+#   uv sync --extra ale
+ale = ["ale-bench @ git+https://github.com/SakanaAI/ALE-Bench.git"]
 dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
 
 [project.scripts]

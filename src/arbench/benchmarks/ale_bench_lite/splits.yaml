@@ -1,0 +1,19 @@
+# Split metadata for ale_bench_lite (benchmark plan §2).
+#
+# Same rules as the other plugins: ONLY checkable facts — family + exclusions
+# with reasons; roles are computed by arbench.assign_roles, never stored.
+# family `code` is the far-domain coding bin from the roadmap: same modality
+# as the agent's own output (Python programs), different discipline entirely.
+# All ten are the official ALE-Bench Lite subset (problem_ids_lite.txt).
+benchmark: ale_bench_lite
+tasks:
+  ahc008: {family: code, kind: optimization}
+  ahc011: {family: code, kind: optimization}
+  ahc015: {family: code, kind: optimization}
+  ahc016: {family: code, kind: optimization}
+  ahc024: {family: code, kind: optimization}
+  ahc025: {family: code, kind: optimization}
+  ahc026: {family: code, kind: optimization}
+  ahc027: {family: code, kind: optimization}
+  ahc039: {family: code, kind: optimization}
+  ahc046: {family: code, kind: optimization}
