@@ -31,7 +31,8 @@ tasks:
   abalone: {family: tabular, kind: regression}
   ada: {family: tabular, kind: classification}
   adult: {family: tabular, kind: classification}
-  airlines: {family: tabular, kind: classification}
+  airlines: {family: tabular, kind: classification,
+             note: "temporal; random split leaks adjacent rows — flag in effect readouts (2026-07-12 audit)"}
   albert: {family: tabular, kind: classification}
   allstate-claims-severity: {family: tabular, kind: regression}
   amazon-employee-access: {family: tabular, kind: classification}
@@ -103,18 +104,21 @@ tasks:
   satellite: {family: tabular, kind: classification}
   satimage: {family: tabular, kind: classification}
   segment: {family: tabular, kind: classification}
-  shuttle: {family: tabular, kind: classification}
+  shuttle: {family: tabular, kind: classification,
+             note: "rarest class has 7 instances total (2 test / 5 train, 2026-07-12 split audit) — per-class readouts unreliable"}
   sick: {family: tabular, kind: classification}
   space-ga: {family: tabular, kind: regression}
   spambase: {family: tabular, kind: classification}
   splice: {family: tabular, kind: classification}
   sylvine: {family: tabular, kind: classification}
   texture: {family: tabular, kind: classification}
-  topo-2-1: {family: tabular, kind: regression}
+  topo-2-1: {family: tabular, kind: regression,
+             note: "train->test target quantile drift >0.25 sd (2026-07-12 split audit); known low-signal task"}
   video-transcoding: {family: tabular, kind: regression}
   volkert: {family: tabular, kind: classification}
   wall-robot-navigation: {family: tabular, kind: classification}
   wave-energy: {family: tabular, kind: regression}
   wilt: {family: tabular, kind: classification}
   yolanda: {family: tabular, kind: regression}
-  yprop-4-1: {family: tabular, kind: regression}
+  yprop-4-1: {family: tabular, kind: regression,
+             note: "train->test target quantile drift >0.25 sd (2026-07-12 split audit); known low-signal task"}

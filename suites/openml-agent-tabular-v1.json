@@ -1,0 +1,827 @@
+{
+ "name": "openml-agent-tabular-v1",
+ "frozen": "2026-07-12",
+ "status": "as-piloted state (rq1-openml-pilot): multiclass metric was accuracy; superseded by v2 (log_loss) at the pre-replication re-pin \u2014 kept so the pilot's provenance stays citable",
+ "derived_from_suites": {
+  "cc18": 99,
+  "amlb-clf": 271,
+  "amlb-reg": 269,
+  "ctr23": 353
+ },
+ "split": {
+  "test_frac": 0.2,
+  "seed": 1234,
+  "method": "seeded permutation, unstratified (2026-07-12 audit: 0 integrity errors, no degenerate splits)"
+ },
+ "n_tasks": 101,
+ "tasks": {
+  "MagicTelescope": {
+   "dataset_id": 44125,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "143850783931bb1e"
+  },
+  "MiniBooNE": {
+   "dataset_id": 44128,
+   "target": "signal",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "208864e77395fa2c"
+  },
+  "abalone": {
+   "dataset_id": 42726,
+   "target": "Class_number_of_rings",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "ba750171ce9f5179"
+  },
+  "ada": {
+   "dataset_id": 41156,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "b9d438722a66d64b"
+  },
+  "adult": {
+   "dataset_id": 1590,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "f254de1e15a4c7e0"
+  },
+  "airlines": {
+   "dataset_id": 1169,
+   "target": "Delay",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "3e57f8410059f6c8"
+  },
+  "albert": {
+   "dataset_id": 41147,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "273c81f939ff2fc7"
+  },
+  "allstate-claims-severity": {
+   "dataset_id": 42571,
+   "target": "loss",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "e3365952f365cc43"
+  },
+  "amazon-employee-access": {
+   "dataset_id": 4135,
+   "target": "target",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "434a3780a243c2a1"
+  },
+  "apsfailure": {
+   "dataset_id": 41138,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "b2c8511494ee82dd"
+  },
+  "auction-verification": {
+   "dataset_id": 44958,
+   "target": "verification.time",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "344c4f1517728b64"
+  },
+  "bank-marketing": {
+   "dataset_id": 44126,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "b9f97ea96a76254f"
+  },
+  "bioresponse": {
+   "dataset_id": 4134,
+   "target": "target",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "0b2b58a0f05a0383"
+  },
+  "black-friday": {
+   "dataset_id": 41540,
+   "target": "Purchase",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "47c60fded7d28b48"
+  },
+  "brazilian-houses": {
+   "dataset_id": 42688,
+   "target": "total_(BRL)",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "ddf0b1ba1b691071"
+  },
+  "buzzinsocialmedia-twitter": {
+   "dataset_id": 4549,
+   "target": "Annotation",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "2c7e24135b7ab3b1"
+  },
+  "california-housing": {
+   "dataset_id": 44977,
+   "target": "medianHouseValue",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "32053b8248c6d7d2"
+  },
+  "christine": {
+   "dataset_id": 41142,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "f8c25ab0d19b7380"
+  },
+  "churn": {
+   "dataset_id": 40701,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "16714e6e31ef4ae1"
+  },
+  "click-prediction-small": {
+   "dataset_id": 42733,
+   "target": "click",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "ffde93faa6588ec8"
+  },
+  "colleges": {
+   "dataset_id": 42727,
+   "target": "percent_pell_grant",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "ea66813b05309ffb"
+  },
+  "connect-4": {
+   "dataset_id": 40668,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "55ec7e3e9161744e"
+  },
+  "covertype": {
+   "dataset_id": 44121,
+   "target": "Y",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "ae46e89c27aba861"
+  },
+  "cps88wages": {
+   "dataset_id": 44984,
+   "target": "wage",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "612196c89fc2b5e4"
+  },
+  "cpu_activity": {
+   "dataset_id": 44132,
+   "target": "usr",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "4df05e5ed0408c2d"
+  },
+  "credit": {
+   "dataset_id": 44089,
+   "target": "SeriousDlqin2yrs",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "23c5716700e584ad"
+  },
+  "diabetes130us": {
+   "dataset_id": 4541,
+   "target": "readmitted",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "ee7b025052c8696d"
+  },
+  "diamonds": {
+   "dataset_id": 42225,
+   "target": "price",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "ec542190972fb965"
+  },
+  "dna": {
+   "dataset_id": 40670,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "e16ecbdcbf900f20"
+  },
+  "electricity": {
+   "dataset_id": 44120,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "34f0c1883fb390d2"
+  },
+  "elevators": {
+   "dataset_id": 216,
+   "target": "Goal",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "fc48f835a21891e2"
+  },
+  "fabert": {
+   "dataset_id": 41164,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "b31ed41338deead4"
+  },
+  "fifa": {
+   "dataset_id": 45012,
+   "target": "wage_eur",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "a9d077bd1929ece7"
+  },
+  "first-order-theorem-proving": {
+   "dataset_id": 1475,
+   "target": "Class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "b6ffb7f1715a3c3b"
+  },
+  "fps-benchmark": {
+   "dataset_id": 44992,
+   "target": "FPS",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "975e2161fe3e1d01"
+  },
+  "gesturephasesegmentationprocessed": {
+   "dataset_id": 4538,
+   "target": "Phase",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "99c9144483b28bd9"
+  },
+  "gina": {
+   "dataset_id": 41158,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "507d5b652b83af45"
+  },
+  "grid-stability": {
+   "dataset_id": 44973,
+   "target": "stab",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "a3b26c9ee85b4421"
+  },
+  "har": {
+   "dataset_id": 1478,
+   "target": "Class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "4f43b2f4b0bf1f50"
+  },
+  "health-insurance": {
+   "dataset_id": 44993,
+   "target": "whrswk",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "60ee98641fb37c6e"
+  },
+  "house-sales": {
+   "dataset_id": 42731,
+   "target": "price",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "182406e92ef27f09"
+  },
+  "house_16H": {
+   "dataset_id": 44123,
+   "target": "binaryClass",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "9f6e4567ebcdbb55"
+  },
+  "internet-advertisements": {
+   "dataset_id": 40978,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "f8ca50bd1f0912eb"
+  },
+  "isolet": {
+   "dataset_id": 300,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "a81fbcdbac1ef205"
+  },
+  "jannis": {
+   "dataset_id": 41168,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "1d5057dd62516f13"
+  },
+  "jasmine": {
+   "dataset_id": 41143,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "85de875304fd1b96"
+  },
+  "jm1": {
+   "dataset_id": 1053,
+   "target": "defects",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "e0256ed9bdb425c1"
+  },
+  "jungle-chess-2pcs-raw-endgame-complete": {
+   "dataset_id": 41027,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "6551d202ea06a5f0"
+  },
+  "kc1": {
+   "dataset_id": 1067,
+   "target": "defects",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "ba25b4a8b7e9d45a"
+  },
+  "kddcup09-appetency": {
+   "dataset_id": 1111,
+   "target": "APPETENCY",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "5d5e528857ced245"
+  },
+  "kick": {
+   "dataset_id": 41162,
+   "target": "IsBadBuy",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "a5be188df5de4d7c"
+  },
+  "kin8nm": {
+   "dataset_id": 44980,
+   "target": "y",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "673fd3f95ae67e83"
+  },
+  "kr-vs-kp": {
+   "dataset_id": 3,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "d5d4817975bc8968"
+  },
+  "letter": {
+   "dataset_id": 6,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "d73122cc37eec1a8"
+  },
+  "madeline": {
+   "dataset_id": 41144,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "fc8260e09d56be4b"
+  },
+  "madelon": {
+   "dataset_id": 1485,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "2c51895afba36366"
+  },
+  "mercedes-benz-greener-manufacturing": {
+   "dataset_id": 42570,
+   "target": "y",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "e23421a166a1fece"
+  },
+  "mfeat-factors": {
+   "dataset_id": 12,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "eba3f86715791e7f"
+  },
+  "mfeat-fourier": {
+   "dataset_id": 14,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "c8fda8f20b278760"
+  },
+  "mfeat-karhunen": {
+   "dataset_id": 16,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "d3ddd107aeb53377"
+  },
+  "mfeat-morphological": {
+   "dataset_id": 18,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "afd3612255249605"
+  },
+  "mfeat-zernike": {
+   "dataset_id": 22,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "828a4ee1770e9461"
+  },
+  "miami-housing": {
+   "dataset_id": 44983,
+   "target": "SALE_PRC",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "68eab2c598fe472e"
+  },
+  "naval-propulsion-plant": {
+   "dataset_id": 44969,
+   "target": "gt_compressor_decay_state_coefficient",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "f222f0a5f524e7f0"
+  },
+  "nomao": {
+   "dataset_id": 1486,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "baad4b1b8312066e"
+  },
+  "numerai28-6": {
+   "dataset_id": 23517,
+   "target": "attribute_21",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "a34916c63b2956c4"
+  },
+  "nyc-taxi-green-dec-2016": {
+   "dataset_id": 42729,
+   "target": "tip_amount",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "9c2d64dce88166f9"
+  },
+  "okcupid-stem": {
+   "dataset_id": 42734,
+   "target": "job",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "bdd2c060a167db3d"
+  },
+  "onlinenewspopularity": {
+   "dataset_id": 42724,
+   "target": "shares",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "4567cf2ba00d42d6"
+  },
+  "ozone-level-8hr": {
+   "dataset_id": 1487,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "18dff8fa712bb8fe"
+  },
+  "pendigits": {
+   "dataset_id": 32,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "f02675806ed63c71"
+  },
+  "philippine": {
+   "dataset_id": 41145,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "2b3c7edfdd2216cb"
+  },
+  "phishingwebsites": {
+   "dataset_id": 4534,
+   "target": "Result",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "c2f6c759dabfade7"
+  },
+  "phoneme": {
+   "dataset_id": 1489,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "b49b65e0bf44c4af"
+  },
+  "physiochemical-protein": {
+   "dataset_id": 44963,
+   "target": "RMSD",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "bcd6a742eb0601e2"
+  },
+  "pol": {
+   "dataset_id": 44122,
+   "target": "binaryClass",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "c6aeee5ccdff7e16"
+  },
+  "porto-seguro": {
+   "dataset_id": 42742,
+   "target": "target",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "63cce9d9fc9c00e4"
+  },
+  "pumadyn32nh": {
+   "dataset_id": 44981,
+   "target": "thetadd6",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "a701a642a9b85168"
+  },
+  "quake": {
+   "dataset_id": 550,
+   "target": "col_4",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "74e4ce506577c3e3"
+  },
+  "sarcos": {
+   "dataset_id": 44976,
+   "target": "V22",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "791b6365347e5829"
+  },
+  "sat11-hand-runtime-regression": {
+   "dataset_id": 41980,
+   "target": "runtime",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "094b9736312042b6"
+  },
+  "satellite": {
+   "dataset_id": 40900,
+   "target": "Target",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "705db94d1f794f4f"
+  },
+  "satimage": {
+   "dataset_id": 182,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "71b37d38a187c016"
+  },
+  "segment": {
+   "dataset_id": 40984,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "800bff0d5c220df9"
+  },
+  "shuttle": {
+   "dataset_id": 40685,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "3d163ff178e1ee97"
+  },
+  "sick": {
+   "dataset_id": 38,
+   "target": "Class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "0a0f286d9502f559"
+  },
+  "space-ga": {
+   "dataset_id": 507,
+   "target": "ln(VOTES/POP)",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "aa23378f54817007"
+  },
+  "spambase": {
+   "dataset_id": 44,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "09a49ff525201ec7"
+  },
+  "splice": {
+   "dataset_id": 46,
+   "target": "Class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "69c3b11cb3895cd1"
+  },
+  "superconduct": {
+   "dataset_id": 44148,
+   "target": "criticaltemp",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "8d2e533abfc29fa2"
+  },
+  "sylvine": {
+   "dataset_id": 41146,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "7b4b03073baf9211"
+  },
+  "texture": {
+   "dataset_id": 40499,
+   "target": "Class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "06a5e7b4a06a0880"
+  },
+  "topo-2-1": {
+   "dataset_id": 422,
+   "target": "oz267",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "9c547d0264d719cb"
+  },
+  "video-transcoding": {
+   "dataset_id": 44974,
+   "target": "utime",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "eae7215eed42e66d"
+  },
+  "volkert": {
+   "dataset_id": 41166,
+   "target": "class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "a8dbb4e6e2ea8adf"
+  },
+  "wall-robot-navigation": {
+   "dataset_id": 1497,
+   "target": "Class",
+   "kind": "multiclass",
+   "metric": "accuracy",
+   "higher_better": true,
+   "data_version": "ec0769fd4d3dc9d6"
+  },
+  "wave-energy": {
+   "dataset_id": 44975,
+   "target": "energy_total",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "f453b9f01e2044db"
+  },
+  "wilt": {
+   "dataset_id": 40983,
+   "target": "class",
+   "kind": "binary",
+   "metric": "roc_auc",
+   "higher_better": true,
+   "data_version": "82651eb2cf4881d4"
+  },
+  "wine_quality": {
+   "dataset_id": 44136,
+   "target": "quality",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "e16af1f3c915942f"
+  },
+  "yolanda": {
+   "dataset_id": 42705,
+   "target": "101",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "8e2b4485ac3e68d9"
+  },
+  "yprop-4-1": {
+   "dataset_id": 416,
+   "target": "oz252",
+   "kind": "regression",
+   "metric": "rmse",
+   "higher_better": false,
+   "data_version": "f1cf89143786c5d5"
+  }
+ }
+}

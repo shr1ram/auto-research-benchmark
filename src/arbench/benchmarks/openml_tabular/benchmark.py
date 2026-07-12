@@ -138,7 +138,11 @@ class OpenMLTabular(Benchmark):
             test_ids = pd.read_csv(task.data_dir / "test.csv", usecols=[id_col])
         except Exception as e:  # noqa: BLE001
             return False, f"could not read test.csv ids: {e}"
-        sub = sub.drop_duplicates(subset=[id_col])
+        if sub[id_col].duplicated().any():
+            n_dup = int(sub[id_col].duplicated().sum())
+            # conflicting predictions for one row almost always mean a broken
+            # pipeline; silently keeping the first masked it (2026-07-12)
+            return False, f"submission has {n_dup} duplicate row_ids"
         merged = test_ids.merge(sub[[id_col] + expected], on=id_col, how="left")
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())
@@ -197,7 +201,10 @@ class OpenMLTabular(Benchmark):
                 f"submission must have columns {[id_col] + expected}; "
                 f"missing {missing} (got {list(sub.columns)})", is_higher_better=hb)
         # align on id, guard against dup/missing ids
-        sub = sub.drop_duplicates(subset=[id_col])
+        if sub[id_col].duplicated().any():
+            n_dup = int(sub[id_col].duplicated().sum())
+            return Score.invalid(f"submission has {n_dup} duplicate row_ids",
+                                 is_higher_better=hb)
         merged = ans.merge(sub[[id_col] + expected], on=id_col, how="left")
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())

@@ -321,3 +321,45 @@ def test_openml_nan_metric_is_invalid_not_valid_nan(tmp_path):
     score = bench.grade(task, sub)
     assert not score.valid
     assert "non-finite" in score.details.get("reason", "")
+
+
+def test_openml_duplicate_row_ids_rejected_by_validate_and_grade(tmp_path):
+    """Conflicting predictions for one row = broken agent pipeline; silently
+    keeping the first masked it (2026-07-12). Both sides must agree."""
+    _stage_openml(tmp_path, metric="roc_auc", kind="binary")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.csv"
+    pd.DataFrame({"row_id": [3, 3, 4, 5], "a": [0.9, 0.1, 0.5, 0.5],
+                  "b": [0.1, 0.9, 0.5, 0.5]}).to_csv(sub, index=False)
+    ok, reason = bench.validate_submission(task, sub)
+    score = bench.grade(task, sub)
+    assert not ok and "duplicate row_ids" in reason
+    assert not score.valid
+    assert "duplicate row_ids" in score.details["reason"]
+
+
+def test_openml_multiclass_metric_is_log_loss():
+    """Metric assignment is convention-derived (AMLB): binary->AUC,
+    multiclass->log_loss (LOWER better), regression->RMSE — never authored."""
+    from arbench.benchmarks.openml_tabular.tasks import BY_ID
+    kinds = {}
+    for spec in BY_ID.values():
+        kinds.setdefault(spec.kind, set()).add((spec.metric, spec.higher_better))
+    assert kinds["binary"] == {("roc_auc", True)}
+    assert kinds["multiclass"] == {("log_loss", False)}
+    assert kinds["regression"] == {("rmse", False)}
+
+
+def test_prepare_rejects_class_collisions(tmp_path, monkeypatch):
+    """Mixed-type targets (raw 1 and '1') stringify to colliding class
+    columns — prep must fail loudly, not desync the probability matrix."""
+    from arbench.benchmarks.openml_tabular import prepare as prep
+    df = pd.DataFrame({"x": [1, 2, 3, 4], "label": [1, "1", 0, 0]})
+    monkeypatch.setattr(prep, "_download_openml_csv",
+                        lambda dataset_id: (df, "label", "toy prose"))
+    spec = type("S", (), {"task_id": TASK, "dataset_id": 0, "target": "label",
+                          "metric": "roc_auc", "higher_better": True,
+                          "kind": "binary", "provenance": ""})()
+    with pytest.raises(ValueError, match="collide"):
+        prep.prepare_one(spec, tmp_path / "pub", tmp_path / "priv")
