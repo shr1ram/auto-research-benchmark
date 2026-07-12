@@ -117,6 +117,14 @@ class ALEBench(Benchmark):
                 f"python scripts/prepare_ale_bench.py {task_id}")
         meta = json.loads((prep / "meta.json").read_text())
         data_version = verify_data_version(prep)   # loud on drift (plan §2)
+        if meta.get("problem_type") == "reactive":
+            # a reactive problem converses with a tester; our stdin->stdout
+            # single-pass contract (and the agent's public self-eval) cannot
+            # serve it — refuse until a tester-in-public-tree contract exists
+            raise RuntimeError(
+                f"task {task_id!r} is a REACTIVE problem — unsupported by the "
+                f"batch submission contract; pick a batch problem "
+                f"(meta.problem_type == 'batch')")
         score_type = meta["score_type"]                 # minimize | maximize
         time_note = (f"time limit {meta['time_limit_s']}s per case"
                      if meta.get("time_limit_s") else "per-case time limit in "
@@ -136,6 +144,7 @@ class ALEBench(Benchmark):
             data_dir=prep,
             submission_filename="submission.py",
             metadata={"score_type": score_type,
+                      "problem_type": meta.get("problem_type", "batch"),
                       "judge_version": meta.get("judge_version"),
                       "n_public_cases": meta.get("n_public_cases"),
                       "staged_seed_regime": meta.get("seed_regime"),

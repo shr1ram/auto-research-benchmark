@@ -41,6 +41,7 @@ def prepare_one(problem_id: str, root: Path, full_seeds: bool) -> None:
         for seed, case in zip(seeds, cases):
             (prep / "cases" / f"{seed:04d}.txt").write_text(case)
         meta = {"problem_id": problem_id,
+                "problem_type": str(problem.metadata.problem_type.value),
                 "score_type": str(problem.metadata.score_type.value),
                 "judge_version": str(getattr(problem.metadata, "judge_version", "")),
                 "time_limit_s": getattr(problem.constraints, "time_limit_s", None),

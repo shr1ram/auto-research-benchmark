@@ -213,3 +213,17 @@ def test_split_facts_cover_every_problem_and_mark_the_lite_subset():
     assert {m["family"] for m in meta.values()} == {"code"}
     lite_marked = {tid for tid, m in meta.items() if m.get("subset") == "lite"}
     assert lite_marked == set(LITE_PROBLEMS)
+
+
+def test_reactive_problems_are_refused(tmp_path):
+    """Our stdin->stdout contract serves BATCH problems only; a reactive
+    problem (tester conversation) must refuse at load, not fail cryptically
+    at self-eval or judging."""
+    prep = _stage(tmp_path)
+    meta = json.loads((prep / "meta.json").read_text())
+    meta["problem_type"] = "reactive"
+    (prep / "meta.json").write_text(json.dumps(meta))
+    (prep / ".data_version").unlink(missing_ok=True)
+    bench = ALEBench(data_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="REACTIVE"):
+        bench.load_task(TASK)
