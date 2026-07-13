@@ -82,6 +82,10 @@ PYTHON_TIME_SCALE = 3.0
 #: the official vis binary prints exactly this (stdout on batch problems)
 _SCORE_RE = re.compile(r"Score\s*=\s*(-?\d+)")
 
+#: cap on a solver's stdout per case — AHC answers are KBs; a runaway
+#: printer must become a rejected case, not grader OOM / a full disk
+MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+
 _CONTRACT = """
 ---
 ## Submission contract (this harness, not part of the contest statement)
@@ -108,45 +112,46 @@ def _sandbox_prefix() -> list[str]:
             "--tmpfs", "/tmp", "--unshare-net", "--die-with-parent"]
 
 
-def _run_case(submission: Path, case_file: Path, timeout_s: float,
-              sandbox: bool) -> tuple[str, Optional[str]]:
-    """One case: returns (outcome, output_text). outcome: ok|tle|error."""
+def _run_case(submission: Path, case_file: Path, out_path: Path,
+              timeout_s: float, sandbox: bool) -> str:
+    """One case: solver stdout streams to out_path ON DISK (never grader
+    RAM — a runaway printer was an OOM, cubic P1) with a byte cap enforced
+    after. Returns ok|tle|error|too_long."""
     cmd = (_sandbox_prefix() if sandbox else []) + [sys.executable,
                                                     str(submission)]
-    with open(case_file, "rb") as stdin:
-        proc = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE,
+    with open(case_file, "rb") as stdin, open(out_path, "wb") as stdout:
+        proc = subprocess.Popen(cmd, stdin=stdin, stdout=stdout,
                                 stderr=subprocess.DEVNULL,
                                 start_new_session=True)
         try:
-            out, _ = proc.communicate(timeout=timeout_s)
+            proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 proc.kill()
-            proc.communicate()
-            return "tle", None
+            proc.wait()
+            return "tle"
     if proc.returncode != 0:
-        return "error", None
-    return "ok", out.decode(errors="replace")
+        return "error"
+    if out_path.stat().st_size > MAX_OUTPUT_BYTES:
+        return "too_long"
+    return "ok"
 
 
-def _score_case(vis: Path, case_file: Path, output_text: str) -> Optional[int]:
+def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
     """Official scorer: `vis <input> <output>` prints 'Score = N'. None if
-    the scorer rejects the output (invalid answer) or emits no score. Each
-    call gets a private tempdir: vis writes vis.html into its cwd, and
+    the scorer rejects the output (invalid answer) or emits no score. cwd is
+    the output's private tempdir: vis writes vis.html into its cwd, and
     concurrent grid cells grading at once must not share scratch space."""
-    with tempfile.TemporaryDirectory(prefix="ale-vis-") as td:
-        out_path = Path(td) / "case.out"
-        out_path.write_text(output_text)
-        try:
-            proc = subprocess.run([str(vis), str(case_file), str(out_path)],
-                                  capture_output=True, text=True, timeout=60,
-                                  cwd=td)
-            matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
-            return int(matches[-1]) if matches else None
-        except (subprocess.TimeoutExpired, OSError):
-            return None
+    try:
+        proc = subprocess.run([str(vis), str(case_file), str(out_path)],
+                              capture_output=True, text=True, timeout=60,
+                              cwd=out_path.parent)
+        matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
+        return int(matches[-1]) if matches else None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
 
 class ALEBench(Benchmark):
@@ -284,15 +289,20 @@ class ALEBench(Benchmark):
 
         total, n_tle, n_error, n_rejected = 0, 0, 0, 0
         for case_file in case_files:
-            outcome, output = _run_case(sub, case_file, time_limit,
-                                        sandboxed)
-            if outcome == "tle":
-                n_tle += 1
-                continue
-            if outcome == "error":
-                n_error += 1
-                continue
-            case_score = _score_case(vis, case_file, output)
+            with tempfile.TemporaryDirectory(prefix="ale-grade-") as td:
+                out_path = Path(td) / "case.out"
+                outcome = _run_case(sub, case_file, out_path, time_limit,
+                                    sandboxed)
+                if outcome == "tle":
+                    n_tle += 1
+                    continue
+                if outcome == "error":
+                    n_error += 1
+                    continue
+                if outcome == "too_long":
+                    n_rejected += 1          # runaway printer: rejected case
+                    continue
+                case_score = _score_case(vis, case_file, out_path)
             if case_score is None:
                 n_rejected += 1              # invalid answer: scores 0
                 continue

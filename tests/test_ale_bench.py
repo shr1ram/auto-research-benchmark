@@ -253,3 +253,26 @@ def test_split_facts_cover_every_problem_and_mark_the_lite_subset():
     assert {m["family"] for m in meta.values()} == {"code"}
     lite_marked = {tid for tid, m in meta.items() if m.get("subset") == "lite"}
     assert lite_marked == set(LITE_PROBLEMS)
+
+
+def test_grade_runaway_stdout_is_rejected_not_ooM(tmp_path):
+    """A solver streaming unbounded stdout must become a rejected case, not
+    buffer into grader RAM (cubic P1 on PR #12). MAX_OUTPUT_BYTES is patched
+    down so the test writes KBs, not MBs."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    # case 10 floods stdout; 11/12 answer normally
+    sub.write_text(
+        "n = int(input())\n"
+        "print('X' * 100000 if n == 10 else n)\n")
+    orig = B.MAX_OUTPUT_BYTES
+    B.MAX_OUTPUT_BYTES = 1024
+    try:
+        score = bench.grade(task, sub)
+    finally:
+        B.MAX_OUTPUT_BYTES = orig
+    assert score.valid and score.value == 46.0          # 22 + 24, case 10 out
+    assert score.details["n_rejected"] == 1

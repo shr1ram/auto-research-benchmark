@@ -83,6 +83,11 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         with zipfile.ZipFile(zip_path) as zf:
+            for member in zf.namelist():
+                # zip-slip guard: every member must resolve below work
+                dest = (work / member).resolve()
+                if not dest.is_relative_to(work.resolve()):
+                    raise RuntimeError(f"{pid}.zip: unsafe member {member!r}")
             zf.extractall(work)
         src = work / pid
         data = json.loads((src / "data.json").read_text())
