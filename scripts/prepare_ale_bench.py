@@ -41,19 +41,9 @@ TOOL_BINARIES = ("gen", "vis", "tester")
 def _fetch_zip(pid: str, zips_dir: Path) -> Path:
     zips_dir.mkdir(parents=True, exist_ok=True)
     dest = zips_dir / f"{pid}.zip"
-    if dest.exists():
-        return dest
-    print(f"[prepare] {pid}: downloading zip")
-    # HF redirects (302) the resolve URL to a signed CDN host; a bare
-    # urlretrieve gets a 403 on that hop, so send a real User-Agent and
-    # follow the redirect explicitly. Write via a .part tmp so an
-    # interrupted download can't leave a truncated zip that later "exists".
-    req = urllib.request.Request(HF_URL.format(pid=pid),
-                                 headers={"User-Agent": "arbench-prepare"})
-    tmp = dest.with_suffix(".zip.part")
-    with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as fh:
-        shutil.copyfileobj(resp, fh)
-    tmp.replace(dest)
+    if not dest.exists():
+        print(f"[prepare] {pid}: downloading zip")
+        urllib.request.urlretrieve(HF_URL.format(pid=pid), dest)
     return dest
 
 
