@@ -133,22 +133,20 @@ def _run_case(submission: Path, case_file: Path, timeout_s: float,
 
 def _score_case(vis: Path, case_file: Path, output_text: str) -> Optional[int]:
     """Official scorer: `vis <input> <output>` prints 'Score = N'. None if
-    the scorer rejects the output (invalid answer) or emits no score."""
-    with tempfile.NamedTemporaryFile("w", suffix=".out", delete=False) as fh:
-        fh.write(output_text)
-        out_path = fh.name
-    try:
-        proc = subprocess.run([str(vis), str(case_file), out_path],
-                              capture_output=True, text=True, timeout=60,
-                              cwd=Path(out_path).parent)
-        matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
-        return int(matches[-1]) if matches else None
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-    finally:
-        Path(out_path).unlink(missing_ok=True)
-        # vis writes vis.html beside its cwd; best-effort cleanup
-        (Path(out_path).parent / "vis.html").unlink(missing_ok=True)
+    the scorer rejects the output (invalid answer) or emits no score. Each
+    call gets a private tempdir: vis writes vis.html into its cwd, and
+    concurrent grid cells grading at once must not share scratch space."""
+    with tempfile.TemporaryDirectory(prefix="ale-vis-") as td:
+        out_path = Path(td) / "case.out"
+        out_path.write_text(output_text)
+        try:
+            proc = subprocess.run([str(vis), str(case_file), str(out_path)],
+                                  capture_output=True, text=True, timeout=60,
+                                  cwd=td)
+            matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
+            return int(matches[-1]) if matches else None
+        except (subprocess.TimeoutExpired, OSError):
+            return None
 
 
 class ALEBench(Benchmark):
@@ -280,11 +278,14 @@ class ALEBench(Benchmark):
                 f"scripts/prepare_ale_bench.py on the grading host",
                 is_higher_better=hb)
         time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
+        # resolved ONCE: requesting a sandbox on a bwrap-less host must be
+        # loud in details, never a silent degrade
+        sandboxed = self.sandbox and bool(_sandbox_prefix())
 
         total, n_tle, n_error, n_rejected = 0, 0, 0, 0
         for case_file in case_files:
             outcome, output = _run_case(sub, case_file, time_limit,
-                                        self.sandbox)
+                                        sandboxed)
             if outcome == "tle":
                 n_tle += 1
                 continue
@@ -301,7 +302,8 @@ class ALEBench(Benchmark):
                    "seed_regime": meta.get("seed_regime"),
                    "time_limit_s": time_limit,
                    "python_time_scale": PYTHON_TIME_SCALE,
-                   "sandboxed": self.sandbox,
+                   "sandboxed": sandboxed,
+                   "sandbox_requested": self.sandbox,
                    "score_type": meta.get("score_type")}
         n_failed = n_tle + n_error + n_rejected
         if n_failed == len(case_files):
