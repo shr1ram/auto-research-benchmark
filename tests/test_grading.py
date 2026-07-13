@@ -381,3 +381,48 @@ def test_load_task_refuses_stale_prepared_metadata(tmp_path):
                           private_data_dir=str(tmp_path / "private"))
     with pytest.raises(RuntimeError, match="disagrees with tasks.py"):
         bench.load_task(TASK)
+
+
+def test_refresh_syncs_metric_from_tasks_py(tmp_path, monkeypatch):
+    """The stale-meta guard names refresh as the migration, so refresh must
+    actually migrate (cubic P1 on PR #11): stale meta -> refreshed to the
+    spec's metric/direction -> loadable again under the default guard."""
+    import importlib.util
+    from pathlib import Path as _P
+    spec = importlib.util.spec_from_file_location(
+        "refresh_openml_task_text",
+        _P(__file__).resolve().parents[1] / "scripts"
+        / "refresh_openml_task_text.py")
+    refresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(refresh)
+
+    # stage wine_quality (spec: regression/rmse/"quality") with a STALE metric
+    _stage_openml(tmp_path, metric="mse", kind="regression")
+    prep = tmp_path / "public" / TASK / "prepared"
+    meta = json.loads((prep / "meta.json").read_text())
+    meta["target"] = "quality"
+    (prep / "meta.json").write_text(json.dumps(meta))
+    pd.DataFrame({"row_id": [0, 1], "x": [1, 2],
+                  "quality": [5.0, 6.0]}).to_csv(prep / "train.csv", index=False)
+    (prep / ".data_version").unlink(missing_ok=True)
+
+    bench = _bench(tmp_path)
+    bench.enforce_spec = True
+    with pytest.raises(RuntimeError, match="disagrees with tasks.py"):
+        bench.load_task(TASK)                          # stale: refused
+
+    monkeypatch.setattr(refresh, "fetch_openml_description",
+                        lambda dataset_id: "upstream prose")
+    refresh.refresh_one(prep, tmp_path / "private" / TASK / "answers.csv")
+
+    refreshed = json.loads((prep / "meta.json").read_text())
+    assert refreshed["metric"] == "rmse"               # synced from BY_ID
+    assert refreshed["higher_better"] is False
+    task = bench.load_task(TASK)                       # guard now passes
+    assert task.metadata["metric"] == "rmse"
+
+
+def test_get_benchmark_refuses_the_enforce_spec_seam():
+    import arbench
+    with pytest.raises(TypeError, match="not a production knob"):
+        arbench.get_benchmark("openml_tabular", enforce_spec=False)

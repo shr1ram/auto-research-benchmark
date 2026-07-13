@@ -22,10 +22,23 @@ import pandas as pd
 from arbench.benchmarks.openml_tabular.prepare import (
     build_description, fetch_openml_description,
 )
+from arbench.benchmarks.openml_tabular.tasks import BY_ID
 
 
 def refresh_one(prep: Path, answers_csv: Path) -> dict:
     meta = json.loads((prep / "meta.json").read_text())
+    spec = BY_ID[meta["task_id"]]
+    # SYNC the spec-owned fields from tasks.py: the stale-meta guard names
+    # this script as the migration, so it must actually migrate (cubic P1,
+    # PR #11 — refresh used to re-emit the OLD metric and stay refused).
+    # kind/target are DATA facts a text refresh cannot change: mismatches
+    # there need a full re-prepare, loudly.
+    if (meta["kind"], meta["target"]) != (spec.kind, spec.target):
+        raise ValueError(
+            f"{meta['task_id']}: kind/target changed in tasks.py "
+            f"({meta['kind']},{meta['target']}) -> ({spec.kind},{spec.target})"
+            f" — a text refresh cannot migrate data; re-run prepare")
+    meta["metric"], meta["higher_better"] = spec.metric, spec.higher_better
     target, kind = meta["target"], meta["kind"]
 
     classes = None
