@@ -109,6 +109,7 @@ def test_loaded_task_carries_split_facts(tmp_path):
     (prep / "train.csv").write_text("id,y\n1,0\n")
     (prep / "sample_submission.csv").write_text("id,prediction\n2,0\n")
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
-                          private_data_dir=str(tmp_path / "private"))
+                          private_data_dir=str(tmp_path / "private"),
+                          enforce_spec=False)
     task = bench.load_task("wine_quality")
     assert task.metadata["split"]["family"] == "tabular"

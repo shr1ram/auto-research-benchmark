@@ -10,7 +10,7 @@ Paper-gates applied BEFORE any data download:
     - active dataset, dense format (no sparse ARFF)
     - 2,000 <= rows <= 600,000   (>= ~400 held-out rows; bounded prepare/exec)
     - features <= 2,000
-    - classification: 2..50 classes (binary -> roc_auc, else accuracy)
+    - classification: 2..50 classes (binary -> roc_auc, else log_loss)
     - not a flattened-image/pixel set (blocklist — vision content is the
       far_vision bin's job, not tabular's)
     - deduplicated by normalised dataset name across suites and against the
@@ -153,8 +153,11 @@ def main() -> None:
     for i in admitted:
         classes = i["classes"] or 0
         kind = "regression" if classes == 0 else ("binary" if classes == 2 else "multiclass")
-        metric = "rmse" if kind == "regression" else ("roc_auc" if kind == "binary" else "accuracy")
-        hb = "False" if metric == "rmse" else "True"
+        # metric is CONVENTION-DERIVED (AMLB), never authored: binary->AUC,
+        # multiclass->log-loss, regression->RMSE (design-decisions "Task prose
+        # is upstream-only" — the suites author the science)
+        metric = "rmse" if kind == "regression" else ("roc_auc" if kind == "binary" else "log_loss")
+        hb = "False" if metric in ("rmse", "log_loss") else "True"
         tid = _norm(i["name"])
         print(f'    OpenMLTaskSpec("{tid}", {i["data_id"]}, "{i["target"]}", '
               f'"{metric}", {hb}, "{kind}", "OpenML {i["name"]} ({",".join(i["suites"])})"),')

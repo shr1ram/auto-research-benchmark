@@ -31,6 +31,11 @@ def get_benchmark(name: str, **kwargs) -> Benchmark:
         from arbench.benchmarks.mlebench_lite.benchmark import MLEBenchLite
         return MLEBenchLite(**kwargs)
     if name == "openml_tabular":
+        if "enforce_spec" in kwargs:
+            # test-only seam (fixtures stage synthetic metas); the factory is
+            # the production path and the stale-meta guard is mandatory there
+            raise TypeError("enforce_spec is not a production knob — "
+                            "construct OpenMLTabular directly in tests")
         from arbench.benchmarks.openml_tabular.benchmark import OpenMLTabular
         return OpenMLTabular(**kwargs)
     raise KeyError(f"unknown benchmark {name!r}; have {list(BENCHMARK_NAMES)}")

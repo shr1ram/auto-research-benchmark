@@ -161,6 +161,10 @@ def prepare_one(spec, data_root: Path, private_root: Path) -> dict:
         sample["prediction"] = float(train[target].mean())
     else:
         classes = sorted(map(str, pd.unique(df[target].dropna())))
+        if len(set(classes)) != len(classes):
+            # mixed-type targets (raw 1 and "1") stringify to colliding class
+            # column names and desync the probability matrix — fail the prep loudly
+            raise ValueError(f"{spec.task_id}: class values collide after str(): {classes}")
         if any(c == "row_id" for c in classes):
             raise ValueError(f"class value collides with id column: {classes}")
         for c in classes:

@@ -54,7 +54,8 @@ def test_openml_load_records_and_checks(tmp_path):
     (prep / "train.csv").write_text("id,y\n1,0\n")
     (prep / "sample_submission.csv").write_text("id,prediction\n2,0\n")
     bench = OpenMLTabular(data_dir=str(tmp_path / "public"),
-                          private_data_dir=str(tmp_path / "private"))
+                          private_data_dir=str(tmp_path / "private"),
+                          enforce_spec=False)
     task = bench.load_task("wine_quality")
     assert task.metadata["data_version"]
     # drift between loads fails the NEXT load loudly

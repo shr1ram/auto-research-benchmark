@@ -39,10 +39,13 @@ def _data_root() -> Path | None:
 class OpenMLTabular(Benchmark):
     name = "openml_tabular"
 
-    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None):
+    def __init__(self, data_dir: str | None = None, private_data_dir: str | None = None,
+                 enforce_spec: bool = True):
         self.data_dir = Path(data_dir) if data_dir else _data_root()
         priv = private_data_dir or os.environ.get("OPENML_PRIVATE_DATA_DIR", "")
         self.private_dir = Path(priv) if priv else None
+        # tests staging synthetic metas opt out; production never does
+        self.enforce_spec = enforce_spec
 
     def _prepared(self, task_id: str) -> Path:
         if not self.data_dir:
@@ -87,6 +90,19 @@ class OpenMLTabular(Benchmark):
             )
         data_version = verify_data_version(prep)   # loud on drift (plan §2)
         meta = json.loads((prep / "meta.json").read_text())
+        stale = {f: (meta.get(f), getattr(spec, f))
+                 for f in ("metric", "higher_better", "kind", "target")
+                 if meta.get(f) != getattr(spec, f)}
+        if stale and self.enforce_spec:
+            # deployed meta disagreeing with tasks.py means the task text /
+            # grading contract predate a spec change (e.g. the 2026-07-12
+            # multiclass accuracy->log_loss switch) — refuse to serve it on
+            # stale terms; re-prepping is the migration
+            raise RuntimeError(
+                f"task {task_id!r}: prepared meta.json disagrees with tasks.py "
+                f"on {sorted(stale)} ({stale}) — re-run "
+                f"scripts/refresh_openml_task_text.py (the deliberate "
+                f"data_version re-pin) before serving this task")
         goal = (prep / "description.md").read_text()
         goal += (f"\nRead the training data under: {prep}\n"
                  f"Write your submission as submission.csv in your working directory.\n")
@@ -138,7 +154,11 @@ class OpenMLTabular(Benchmark):
             test_ids = pd.read_csv(task.data_dir / "test.csv", usecols=[id_col])
         except Exception as e:  # noqa: BLE001
             return False, f"could not read test.csv ids: {e}"
-        sub = sub.drop_duplicates(subset=[id_col])
+        if sub[id_col].duplicated().any():
+            n_dup = int(sub[id_col].duplicated().sum())
+            # conflicting predictions for one row almost always mean a broken
+            # pipeline; silently keeping the first masked it (2026-07-12)
+            return False, f"submission has {n_dup} duplicate row_ids"
         merged = test_ids.merge(sub[[id_col] + expected], on=id_col, how="left")
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())
@@ -197,7 +217,10 @@ class OpenMLTabular(Benchmark):
                 f"submission must have columns {[id_col] + expected}; "
                 f"missing {missing} (got {list(sub.columns)})", is_higher_better=hb)
         # align on id, guard against dup/missing ids
-        sub = sub.drop_duplicates(subset=[id_col])
+        if sub[id_col].duplicated().any():
+            n_dup = int(sub[id_col].duplicated().sum())
+            return Score.invalid(f"submission has {n_dup} duplicate row_ids",
+                                 is_higher_better=hb)
         merged = ans.merge(sub[[id_col] + expected], on=id_col, how="left")
         if merged[expected].isna().any().any():
             n = int(merged[expected].isna().any(axis=1).sum())
