@@ -276,3 +276,31 @@ def test_grade_runaway_stdout_is_rejected_not_ooM(tmp_path):
         B.MAX_OUTPUT_BYTES = orig
     assert score.valid and score.value == 46.0          # 22 + 24, case 10 out
     assert score.details["n_rejected"] == 1
+
+
+def test_grade_detects_private_case_count_mismatch(tmp_path):
+    """A partially-staged private tree must not grade silently on fewer
+    cases (a truncated grade reads as a genuine low score)."""
+    pub, priv = _stage(tmp_path, n_private=3)          # meta says 3
+    (priv / "cases" / "case_0002.txt").unlink()        # now only 2 on disk
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    score = bench.grade(task, sub)
+    assert not score.valid and "expects 3" in score.details["reason"]
+
+
+def test_grade_detects_private_tree_drift(tmp_path):
+    """The private cases/scorer are grade inputs — silent drift must be
+    caught, same as public data_version drift."""
+    from arbench.core.data_version import verify_data_version
+    pub, priv = _stage(tmp_path)
+    verify_data_version(priv)                          # stamp .data_version
+    (priv / "cases" / "case_0000.txt").write_text("999\n")   # silent drift
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    score = bench.grade(task, sub)
+    assert not score.valid and "drift" in score.details["reason"]

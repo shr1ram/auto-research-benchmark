@@ -118,6 +118,10 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
                 shutil.copy2(built, priv / "bin" / name)
         (priv / "seeds.json").write_text(json.dumps(
             {"regime": regime, "private_seeds": private_seeds}))
+        # the private cases + scorer ARE the grade inputs — drift-protect them
+        # too (grade re-verifies). Stamp AFTER all private writes.
+        (priv / ".data_version").unlink(missing_ok=True)
+        private_version = verify_data_version(priv)
 
         # public view: statement + meta (public seeds ONLY)
         shutil.copy(src / "statement_en.md", prep / "problem.md")
@@ -129,6 +133,7 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
                 "contest_start_at": data["metadata"].get("start_at"),
                 "n_public_cases": len(public_seeds),
                 "n_private_cases": len(private_seeds),
+                "private_data_version": private_version,
                 "public_seeds": public_seeds,
                 "seed_regime": regime}
         (prep / "meta.json").write_text(json.dumps(meta, indent=1))

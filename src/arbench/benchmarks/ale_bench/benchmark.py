@@ -282,6 +282,20 @@ class ALEBench(Benchmark):
                 f"private cases/scorer not staged for {task.task_id} — run "
                 f"scripts/prepare_ale_bench.py on the grading host",
                 is_higher_better=hb)
+        expected = meta.get("n_private_cases")
+        if expected is not None and len(case_files) != expected:
+            # a partially-staged private tree would score on FEWER cases
+            # silently (a truncated grade reads as a genuine low score)
+            return Score.invalid(
+                f"private tree has {len(case_files)} cases, meta expects "
+                f"{expected} — re-stage {task.task_id}", is_higher_better=hb)
+        try:
+            # the private cases + scorer are the grade inputs; drift here
+            # shifts scores as surely as public drift shifts the task
+            verify_data_version(priv)
+        except RuntimeError as e:
+            return Score.invalid(f"private-tree drift: {e}",
+                                 is_higher_better=hb)
         time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
         # resolved ONCE: requesting a sandbox on a bwrap-less host must be
         # loud in details, never a silent degrade
