@@ -109,12 +109,20 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
         _stage_cases(_gen_cases(gen, private_seeds, priv_work),
                      priv / "cases")
 
-        # official tools -> private bin (grader-only; vis scores, tester is
-        # the future reactive path)
+        # the grading tool for THIS problem type is REQUIRED — a build that
+        # produced no vis (batch) / no tester (reactive) leaves an unusable
+        # staged task that fails only later at grade time (cubic P2)
+        reactive = data["metadata"]["problem_type"] == "reactive"
+        required = "tester" if reactive else "vis"
+        if not (bin_dir / required).is_file():
+            raise RuntimeError(
+                f"{pid}: cargo build produced no `{required}` binary "
+                f"(problem_type={data['metadata']['problem_type']}) — the "
+                f"staged task would be ungradeable")
         (priv / "bin").mkdir(parents=True, exist_ok=True)
         for name in TOOL_BINARIES:
             built = bin_dir / name
-            if built.exists():
+            if built.is_file():
                 shutil.copy2(built, priv / "bin" / name)
         (priv / "seeds.json").write_text(json.dumps(
             {"regime": regime, "private_seeds": private_seeds}))
@@ -127,11 +135,9 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
         # PUBLIC cases, so stage the tester publicly too. It reads its case
         # from stdin and carries no private data -> firewall-safe. (batch
         # problems need no public binary — vis is grader-only.)
-        if data["metadata"]["problem_type"] == "reactive":
+        if reactive:
             (prep / "bin").mkdir(parents=True, exist_ok=True)
-            built = bin_dir / "tester"
-            if built.exists():
-                shutil.copy2(built, prep / "bin" / "tester")
+            shutil.copy2(bin_dir / "tester", prep / "bin" / "tester")
 
         # public view: statement + meta (public seeds ONLY)
         shutil.copy(src / "statement_en.md", prep / "problem.md")

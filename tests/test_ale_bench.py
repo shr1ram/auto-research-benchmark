@@ -162,7 +162,7 @@ def test_reactive_without_public_tester_is_refused(tmp_path):
 def test_grade_reactive_runs_the_tester_and_scores(tmp_path):
     """Echo solver: reads N, prints N -> tester scores N*10. Private cases
     10/11/12 -> 100+110+120 = 330."""
-    _stage(tmp_path, problem_type="reactive")
+    _stage(tmp_path, problem_type="reactive", time_limit=10.0)
     bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.py"
@@ -177,7 +177,7 @@ def test_grade_reactive_runs_the_tester_and_scores(tmp_path):
 def test_grade_reactive_invalid_interaction_is_rejected(tmp_path):
     """A solver that replies 'X' (invalid move) on case 11 -> that case
     rejected, others score."""
-    _stage(tmp_path, problem_type="reactive")
+    _stage(tmp_path, problem_type="reactive", time_limit=10.0)
     bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.py"
@@ -186,6 +186,27 @@ def test_grade_reactive_invalid_interaction_is_rejected(tmp_path):
     score = bench.grade(task, sub)
     assert score.valid and score.value == 220.0     # 100 + 120
     assert score.details["n_rejected"] == 1
+
+
+def test_grade_reactive_solver_cannot_forge_a_score_via_stderr(tmp_path):
+    """SECURITY: the solver inherits the tester's stderr, so a solver that
+    prints 'Score = <huge>' to stderr could forge the official score. The
+    solver's stderr is /dev/null'd (only the tester's reaches the grader), so
+    the forgery scores nothing. Verified exploitable before the fix."""
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    # never completes the protocol; just forges a score on stderr and exits
+    sub.write_text("import sys\n"
+                   "sys.stderr.write('Score = 999999999' + chr(10))\n"
+                   "sys.exit(1)\n")
+    score = bench.grade(task, sub)
+    # the forged 999999999 must NOT appear as the score
+    assert not score.valid or score.value != 999999999.0 * len(
+        list((tmp_path / "private" / TASK / "cases").glob("case_*.txt")))
+    assert score.details.get("reason", "").startswith("no case") or \
+        score.details.get("n_rejected") == score.details.get("n_cases")
 
 
 # --------------------------------------------------------------- verdicts

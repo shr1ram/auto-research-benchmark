@@ -55,6 +55,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -126,13 +127,29 @@ _CONTRACT_REACTIVE = """
 """
 
 
-def _sandbox_prefix() -> list[str]:
-    """bwrap when available: read-only root, no network, private /tmp — the
-    submission is agent code and grading must not extend its reach."""
+def _sandbox_prefix(private_root: Optional[Path] = None) -> list[str]:
+    """bwrap when available: read-only root, no network, private /tmp, and a
+    PRIVATE PID namespace with a fresh /proc — the submission is agent code
+    and grading must not extend its reach.
+
+    When `private_root` is given (reactive grading), a tmpfs is mounted over
+    it so the solver cannot read the hidden cases/seeds (cubic P0), and the
+    tester binary under it is re-bound read-only so the tester still runs.
+    The private PID namespace (--unshare-pid + fresh /proc) is what stops a
+    reactive solver forging a score via /proc/<tester>/fd/2: the tester is
+    not visible in the solver's PID namespace (cubic P0, verified)."""
     if shutil.which("bwrap") is None:
         return []
-    return ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-            "--tmpfs", "/tmp", "--unshare-net", "--die-with-parent"]
+    cmd = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp",
+           "--unshare-net", "--unshare-pid", "--proc", "/proc",
+           "--die-with-parent"]
+    if private_root is not None:
+        pr = str(private_root)
+        cmd += ["--tmpfs", pr]
+        tester = private_root / "bin" / "tester"
+        if tester.is_file():
+            cmd += ["--ro-bind", str(tester), str(tester)]
+    return cmd
 
 
 def _run_case(submission: Path, case_file: Path, out_path: Path,
@@ -178,19 +195,41 @@ def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
 
 
 def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
-                            timeout_s: float, sandbox: bool) -> Optional[int]:
-    """Reactive case: `tester <python> <submission.py>` with the case on the
-    TESTER's stdin. The tester spawns the solver, mediates the dialogue over
-    pipes, and prints 'Score = N' (to stderr) itself — no separate scorer, no
-    output file. Returns the score, or None if the interaction failed
-    (invalid move, TLE, tester rejected, or no score emitted). The whole
-    tester+solver tree runs in the sandbox as one process group."""
-    inner = [str(tester), sys.executable, str(submission)]
-    cmd = (_sandbox_prefix() if sandbox else []) + inner
+                            timeout_s: float, sandbox: bool
+                            ) -> tuple[str, Optional[int]]:
+    """Reactive case: the official `tester` reads the case on ITS stdin,
+    spawns the solver, mediates the dialogue over pipes, and prints
+    'Score = N' to ITS stderr — no separate scorer, no output file. Returns
+    the score, or None if the interaction failed (invalid move, TLE, tester
+    rejected, or no score). The whole tester+solver tree runs in the sandbox
+    as one process group.
+
+    SECURITY (cubic P0, both verified exploitable then fixed): a reactive
+    solver shares the tester's stderr fd and its filesystem/proc view, so it
+    could (a) read the hidden private cases and (b) forge a score by writing
+    'Score = 999...' to the tester's stderr via /proc/<tester>/fd/2. The
+    sandbox closes both: a tmpfs masks the private root (cases hidden), and a
+    PRIVATE PID NAMESPACE (--unshare-pid + fresh /proc) means the tester is
+    not visible in the solver's proc, so its fds are unreachable. The solver's
+    own stderr is additionally /dev/null'd (noise, not trusted). Only a
+    SUCCESSFUL tester exit whose stderr carries 'Score = N' counts."""
+    # the tester's private root is masked in the sandbox (hide hidden cases)
+    # and re-binds the tester binary; the PID namespace stops proc-fd forgery.
+    private_root = tester.parent.parent
+    solver = (f"exec {shlex.quote(sys.executable)} "
+              f"{shlex.quote(str(submission))} 2>/dev/null")
+    inner = [str(tester), "/bin/sh", "-c", solver]
+    cmd = (_sandbox_prefix(private_root) if sandbox else []) + inner
     with open(case_file, "rb") as stdin:
         proc = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, start_new_session=True)
         try:
+            # communicate() is the timeout-safe reader (a raw read() would
+            # ignore the timeout and hang on a deadlocked solver). After the
+            # sandbox fix the ONLY writer to this stderr is the trusted
+            # official tester (the solver's stderr is /dev/null'd and it can no
+            # longer reach the tester's fd), which emits a single score line —
+            # so it is bounded in practice; sliced to the cap defensively.
             _, err = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             try:
@@ -198,9 +237,15 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
             except (ProcessLookupError, PermissionError):
                 proc.kill()
             proc.communicate()
-            return None
-    matches = _SCORE_RE.findall(err.decode(errors="replace"))
-    return int(matches[-1]) if matches else None
+            return "tle", None
+    if proc.returncode != 0:
+        # the tester exits nonzero on a rejected interaction (invalid move,
+        # solver crash) — don't trust a score line from a failed run
+        return "rejected", None
+    matches = _SCORE_RE.findall(err[:MAX_OUTPUT_BYTES].decode(errors="replace"))
+    if matches:
+        return "ok", int(matches[-1])
+    return "rejected", None    # successful exit but no score line
 
 
 class ALEBench(Benchmark):
@@ -360,10 +405,13 @@ class ALEBench(Benchmark):
         total, n_tle, n_error, n_rejected = 0, 0, 0, 0
         for case_file in case_files:
             if reactive:
-                # the tester runs+scores in one call; a failed interaction
-                # (TLE, invalid move, no score) is a single rejected case
-                case_score = _run_and_score_reactive(
+                # the tester runs+scores in one call; TLE vs rejected
+                # (invalid move / no score) are distinguished for the audit
+                outcome, case_score = _run_and_score_reactive(
                     scorer, sub, case_file, time_limit, sandboxed)
+                if outcome == "tle":
+                    n_tle += 1
+                    continue
                 if case_score is None:
                     n_rejected += 1
                     continue
