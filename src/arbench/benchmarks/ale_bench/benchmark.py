@@ -1,53 +1,67 @@
 """ALE-Bench plugin: AtCoder Heuristic Contest problems as arbench Tasks.
 
-An alternative benchmark, selectable like any other: score-based
-optimisation problems with no perfect solution — score-guided improvement IS
-the task, which is exactly the shape our draft→debug→improve loop optimises.
-Task distance is NOT baked in here: family `code` is a modality fact, and
-near/far grouping is assigned at ANALYSIS time, relative to wherever the
-banks were built (benchmark plan §2 — distance is benchmark-relational).
-Full 40-problem set; `tasks.LITE_PROBLEMS` is the official cheap subset for
-task selection (splits.yaml marks its members `subset: lite`).
+An alternative benchmark, selectable like any other: score-based optimisation
+problems with no perfect solution — score-guided improvement IS the task.
+Task distance is NOT baked in here: family `code` is a modality fact; near/far
+grouping is assigned at ANALYSIS time relative to wherever the banks were
+built (benchmark plan §2). Full 40-problem set; `tasks.LITE_PROBLEMS` is the
+official cheap subset (splits.yaml marks its members `subset: lite`).
 
-Layout (public tree only — see FIREWALL below):
+SELF-CONTAINED grading (owner call 2026-07-13): the dataset zips ship the
+official Rust tools (case generator `gen`, scorer `vis`, reactive `tester`)
+plus every seed list — so prepare AND grade run entirely on the lab boxes,
+no Docker, no Mac, no `ale-bench` package. Internal consistency is the goal,
+not parity with Sakana's judge environment (their own results inherit host
+CPUs too; see design-decisions "ale_bench standalone decisions"). Their
+package remains only as an optional one-off cross-check
+(`uv sync --extra ale-crosscheck`).
 
-    $ALE_DATA_DIR/<problem_id>/prepared/
+Layout:
+
+    $ALE_DATA_DIR/<problem_id>/prepared/          # PUBLIC (agent-bindable)
         problem.md        # official statement (EN) + our submission contract
-        meta.json         # {problem_id, score_type, judge_version,
-                          #  n_public_cases, public_seeds, seed_regime, ...}
-        cases/<seed>.txt  # the staged PUBLIC input cases
-        .data_version     # trust-on-first-use stamp (core/data_version.py)
+        meta.json         # score_type, problem_type, time_limit_s,
+                          # n_public/private_cases, public_seeds, seed_regime
+        cases/case_<i>.txt   # official public inputs (their public seed list)
+        .data_version     # trust-on-first-use stamp
+    $ALE_PRIVATE_DATA_DIR/<problem_id>/           # PRIVATE (grader-only)
+        cases/case_<i>.txt   # official private inputs (their private seeds)
+        bin/vis (+ bin/tester, bin/gen)   # official tools, compiled at prep
+        seeds.json           # the private seed list (never in public meta)
 
 Submission contract: `submission.py` — a single-file Python 3 program that
 reads ONE input case from stdin and writes the answer to stdout. The agent's
-solution.py writes it, runs it over cases/, self-scores per the statement's
-scoring rule (that is what human contestants do — the score formula is part
-of the statement), and reports the mean as its proxy score (negated for
-minimise problems: higher is always better).
+solution.py writes it, runs it over the public cases/, self-scores per the
+statement's scoring rule (what human contestants do), and reports the mean
+(negated for minimise problems: higher is always better) as its proxy.
 
-Grading: `session.private_eval` from the `ale-bench` package (Sakana AI) —
-the OFFICIAL judge over hidden cases derived from private seeds. Seed regime
-is a constructor knob: `full_seeds=False` (default) grades on the package's
-lite seed set (10% of private seeds — tractable), `full_seeds=True` on the
-full contest seed set (plus rank/performance). The regime is recorded in
-Score.details; regimes are NOT comparable across runs. The dependency is
-deliberately optional (`uv sync --extra ale`, pinned commit) and
-Docker-backed: grading runs where Docker exists (dev machine), not on the
-Singularity-only boxes; a missing judge grades Score.invalid, loudly.
+Grading = run `submission.py` over the PRIVATE cases under the official time
+limit × PYTHON_TIME_SCALE (one constant, identical across arms — their judge
+also scales time per language), score each (input, output) with the official
+`vis` binary, SUM the case scores (their overall_absolute_score semantics).
+The submission is agent code: it executes inside a bwrap sandbox when
+available (same posture as attempt execution), plain process-group subprocess
+otherwise. TLE / nonzero exit / unparsable score = 0 for that case, counted
+in Score.details.
 
-FIREWALL: nothing private is ever staged — hidden cases exist only inside
-ale-bench's own data cache (default ~/.cache/ale-bench, or $ALE_BENCH_DATA),
-materialised grader-side at private_eval time. That cache directory must
-NEVER be bind-allowlisted into an agent container. validate_submission is
-pure format (exists / size / parses) and touches no ale-bench state.
+FIREWALL: the dataset zips contain the private seed lists (data.json), so
+raw zips and everything derived from private seeds live ONLY under the
+private root; public meta.json carries public seeds and counts, never the
+private list. validate_submission is pure format and touches neither tree.
 """
 from __future__ import annotations
 
 import ast
 import json
 import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from arbench.core.benchmark import Benchmark
 from arbench.core.data_version import verify_data_version
@@ -58,6 +72,15 @@ from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS
 
 #: AtCoder's submission size limit is 512 KiB; enforce the same
 MAX_SUBMISSION_BYTES = 512 * 1024
+
+#: grading time limit = official time_limit × this (Python does less work per
+#: second than the C++ the contests assume; their judge scales per-language
+#: too). One constant, identical across arms — internal-consistency knob,
+#: never a comparability claim.
+PYTHON_TIME_SCALE = 3.0
+
+#: the official vis binary prints exactly this (stdout on batch problems)
+_SCORE_RE = re.compile(r"Score\s*=\s*(-?\d+)")
 
 _CONTRACT = """
 ---
@@ -71,9 +94,61 @@ _CONTRACT = """
   using the scoring rule defined in the statement above, and write the MEAN
   into result.json. This problem {direction_note} — report a higher-is-better
   number (negate the mean if the problem minimises).
-- The official judge runs `submission.py` on HIDDEN cases drawn from the
-  same generator; your reported score is your own estimate of it.
+- The hidden test set uses the same case generator; your reported score is
+  your own estimate of your solver's true quality.
 """
+
+
+def _sandbox_prefix() -> list[str]:
+    """bwrap when available: read-only root, no network, private /tmp — the
+    submission is agent code and grading must not extend its reach."""
+    if shutil.which("bwrap") is None:
+        return []
+    return ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+            "--tmpfs", "/tmp", "--unshare-net", "--die-with-parent"]
+
+
+def _run_case(submission: Path, case_file: Path, timeout_s: float,
+              sandbox: bool) -> tuple[str, Optional[str]]:
+    """One case: returns (outcome, output_text). outcome: ok|tle|error."""
+    cmd = (_sandbox_prefix() if sandbox else []) + [sys.executable,
+                                                    str(submission)]
+    with open(case_file, "rb") as stdin:
+        proc = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+        try:
+            out, _ = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+            proc.communicate()
+            return "tle", None
+    if proc.returncode != 0:
+        return "error", None
+    return "ok", out.decode(errors="replace")
+
+
+def _score_case(vis: Path, case_file: Path, output_text: str) -> Optional[int]:
+    """Official scorer: `vis <input> <output>` prints 'Score = N'. None if
+    the scorer rejects the output (invalid answer) or emits no score."""
+    with tempfile.NamedTemporaryFile("w", suffix=".out", delete=False) as fh:
+        fh.write(output_text)
+        out_path = fh.name
+    try:
+        proc = subprocess.run([str(vis), str(case_file), out_path],
+                              capture_output=True, text=True, timeout=60,
+                              cwd=Path(out_path).parent)
+        matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
+        return int(matches[-1]) if matches else None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    finally:
+        Path(out_path).unlink(missing_ok=True)
+        # vis writes vis.html beside its cwd; best-effort cleanup
+        (Path(out_path).parent / "vis.html").unlink(missing_ok=True)
 
 
 class ALEBench(Benchmark):
@@ -81,18 +156,19 @@ class ALEBench(Benchmark):
 
     def __init__(self, data_dir: str | None = None,
                  private_data_dir: str | None = None,
-                 session_factory=None, full_seeds: bool = False):
+                 sandbox: bool | None = None):
         root = data_dir or os.environ.get("ALE_DATA_DIR", "")
         self.data_dir = Path(root) if root else None
-        # accepted for get_benchmark(**kwargs) parity, but there IS no private
-        # tree: hidden cases live only in ale-bench's grader-side cache
-        if private_data_dir:
-            raise ValueError(
-                "ale_bench has no private data tree — hidden cases live in "
-                "ale-bench's own cache; do not pass private_data_dir")
-        self.full_seeds = full_seeds
-        # tests inject a fake; the default lazily imports ale-bench at grade
-        self._session_factory = session_factory
+        priv = private_data_dir or os.environ.get("ALE_PRIVATE_DATA_DIR", "")
+        if priv:
+            self.private_dir = Path(priv)
+        else:
+            # same convention as openml: sibling `private/` of the public root
+            self.private_dir = (self.data_dir.parent / "private"
+                                if self.data_dir else None)
+        # None = auto (bwrap if present); tests pass False for portability
+        self.sandbox = shutil.which("bwrap") is not None if sandbox is None \
+            else sandbox
 
     # ------------------------------------------------------------- tasks
 
@@ -105,6 +181,12 @@ class ALEBench(Benchmark):
                                "ale_bench public root).")
         return self.data_dir / task_id / "prepared"
 
+    def _private(self, task_id: str) -> Path:
+        if not self.private_dir:
+            raise RuntimeError("no private root: set ALE_PRIVATE_DATA_DIR or "
+                               "ALE_DATA_DIR (private/ sibling convention)")
+        return self.private_dir / task_id
+
     def load_task(self, task_id: str) -> Task:
         if task_id not in ALL_PROBLEMS:
             raise RuntimeError(f"unknown ale_bench task {task_id!r}; "
@@ -113,8 +195,8 @@ class ALEBench(Benchmark):
         if not (prep / "meta.json").exists():
             raise RuntimeError(
                 f"task {task_id!r} is not prepared at {prep}.\n"
-                f"Prepare it (needs the `ale` extra + Docker):  "
-                f"python scripts/prepare_ale_bench.py {task_id}")
+                f"Prepare it (needs cargo — `rustup` is a user-level "
+                f"install):  python scripts/prepare_ale_bench.py {task_id}")
         meta = json.loads((prep / "meta.json").read_text())
         data_version = verify_data_version(prep)   # loud on drift (plan §2)
         if meta.get("problem_type") == "reactive":
@@ -136,8 +218,8 @@ class ALEBench(Benchmark):
             direction_note=f"{score_type.upper()}S its score")
         return Task(
             task_id=task_id, benchmark=self.name, goal=goal,
-            eval=(f"official AtCoder Heuristic Contest judge on hidden cases; "
-                  f"absolute score, {score_type} "
+            eval=(f"official AtCoder Heuristic Contest scorer over hidden "
+                  f"cases; absolute score, {score_type} "
                   f"({'higher' if score_type == 'maximize' else 'lower'} is "
                   f"better on the judge; your result.json must always report "
                   f"higher-is-better)"),
@@ -145,9 +227,10 @@ class ALEBench(Benchmark):
             submission_filename="submission.py",
             metadata={"score_type": score_type,
                       "problem_type": meta.get("problem_type", "batch"),
-                      "judge_version": meta.get("judge_version"),
+                      "time_limit_s": meta.get("time_limit_s"),
                       "n_public_cases": meta.get("n_public_cases"),
-                      "staged_seed_regime": meta.get("seed_regime"),
+                      "n_private_cases": meta.get("n_private_cases"),
+                      "seed_regime": meta.get("seed_regime"),
                       "data_version": data_version,
                       "split": meta.get("split")},
         )
@@ -156,8 +239,8 @@ class ALEBench(Benchmark):
 
     def validate_submission(self, task: Task, submission_path: Path):
         """FORMAT-only (the sole grader output allowed into a running loop):
-        a regular, non-empty, size-capped file that parses as Python. Never
-        touches ale-bench or anything private."""
+        a regular, non-empty, size-capped file that parses as Python. Touches
+        neither data tree."""
         p = Path(submission_path)
         if not p.is_file():
             return False, "submission.py is missing or not a regular file"
@@ -180,47 +263,55 @@ class ALEBench(Benchmark):
 
     # ------------------------------------------------------------ grading
 
-    def _session(self, task_id: str):
-        if self._session_factory is not None:
-            return self._session_factory(task_id)
-        import ale_bench   # the `ale` extra; needs a Docker host
-        return ale_bench.start(problem_id=task_id,
-                               lite_version=not self.full_seeds,
-                               run_visualization_server=False)
-
     def grade(self, task: Task, submission_path: Path) -> Score:
         meta = task.metadata
         hb = meta.get("score_type") == "maximize"
-        try:
-            code = Path(submission_path).read_text(errors="replace")
-        except OSError as e:   # missing, unreadable, or a directory
-            return Score.invalid(f"submission.py unreadable: "
-                                 f"{e.__class__.__name__}", is_higher_better=hb)
-        try:
-            session = self._session(task.task_id)
-        except Exception as e:  # noqa: BLE001 — missing extra / no Docker
+        sub = Path(submission_path)
+        if not sub.is_file():
+            return Score.invalid("submission.py missing or not a regular file",
+                                 is_higher_better=hb)
+        priv = self._private(task.task_id)
+        vis = priv / "bin" / "vis"
+        case_files = sorted((priv / "cases").glob("case_*.txt")) \
+            if (priv / "cases").is_dir() else []
+        if not case_files or not vis.is_file():
             return Score.invalid(
-                f"ale-bench judge unavailable ({type(e).__name__}: {e}); "
-                f"grade on a Docker host with the `ale` extra installed",
+                f"private cases/scorer not staged for {task.task_id} — run "
+                f"scripts/prepare_ale_bench.py on the grading host",
                 is_higher_better=hb)
-        try:
-            result, rank, performance = session.private_eval(code, "python")
-            value = float(result.overall_absolute_score)
-            details = {"judge_result": str(result.overall_judge_result),
-                       "n_cases": len(result.case_results),
-                       "rank": rank, "performance": performance,
-                       "seed_regime": "full" if self.full_seeds else "lite",
-                       "score_type": meta.get("score_type")}
-        except Exception as e:  # noqa: BLE001 — judge is external
-            return Score.invalid(f"private_eval failed: {type(e).__name__}: {e}",
-                                 is_higher_better=hb)
-        finally:
-            try:
-                session.close()
-            except Exception:  # noqa: BLE001,S110 — best-effort cleanup
-                pass
-        if not (value == value and abs(value) != float("inf")):  # non-finite
-            return Score.invalid(f"judge returned non-finite score {value!r}",
-                                 is_higher_better=hb)
-        return Score(value=value, valid=True, is_higher_better=hb,
+        time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
+
+        total, n_tle, n_error, n_rejected = 0, 0, 0, 0
+        for case_file in case_files:
+            outcome, output = _run_case(sub, case_file, time_limit,
+                                        self.sandbox)
+            if outcome == "tle":
+                n_tle += 1
+                continue
+            if outcome == "error":
+                n_error += 1
+                continue
+            case_score = _score_case(vis, case_file, output)
+            if case_score is None:
+                n_rejected += 1              # invalid answer: scores 0
+                continue
+            total += case_score
+        details = {"n_cases": len(case_files), "n_tle": n_tle,
+                   "n_error": n_error, "n_rejected": n_rejected,
+                   "seed_regime": meta.get("seed_regime"),
+                   "time_limit_s": time_limit,
+                   "python_time_scale": PYTHON_TIME_SCALE,
+                   "sandboxed": self.sandbox,
+                   "score_type": meta.get("score_type")}
+        n_failed = n_tle + n_error + n_rejected
+        if n_failed == len(case_files):
+            return Score.invalid("no case produced a scoreable output "
+                                 f"({details})", is_higher_better=hb)
+        if n_failed and not hb:
+            # on a MINIMIZE problem a failed case contributing 0 would
+            # IMPROVE the total — never report a misleading number
+            return Score.invalid(
+                f"{n_failed} failed case(s) on a minimize problem ({details})",
+                is_higher_better=hb)
+        return Score(value=float(total), valid=True, is_higher_better=hb,
                      details=details)

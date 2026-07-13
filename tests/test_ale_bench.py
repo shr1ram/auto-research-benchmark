@@ -1,119 +1,132 @@
-"""ale_bench plugin: task view, format verdicts, judge-backed grading (the
-judge itself is always faked — no ale-bench import, Docker, or network
-anywhere in CI)."""
+"""ale_bench plugin: task view, format verdicts, and SELF-CONTAINED grading.
+
+Grading tests are real: the submission genuinely executes as a subprocess
+over staged case files, and the 'official scorer' is a stub python script
+speaking the vis interface (`vis <input> <output>` -> 'Score = N'). No Rust,
+Docker, or network anywhere; sandbox=False for portability (bwrap is
+box-only)."""
 from __future__ import annotations
 
 import json
+import stat
+import sys
 
 import pytest
 
 from arbench.benchmarks.ale_bench.benchmark import (
-    MAX_SUBMISSION_BYTES, ALEBench,
+    MAX_SUBMISSION_BYTES, PYTHON_TIME_SCALE, ALEBench,
 )
 from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS, LITE_PROBLEMS
 
-TASK = "ahc008"
+TASK = "ahc011"
 
 
-def _stage(root, score_type="maximize"):
-    prep = root / TASK / "prepared"
-    (prep / "cases").mkdir(parents=True)
-    (prep / "problem.md").write_text(
-        "# Toy AHC\n\nPlace things well. Score = sum of goodness.\n")
-    (prep / "meta.json").write_text(json.dumps(
-        {"problem_id": TASK, "score_type": score_type,
-         "judge_version": "202301", "time_limit_s": 2,
-         "n_public_cases": 2, "public_seeds": [0, 1],
-         "seed_regime": "lite"}))
-    (prep / "cases" / "0000.txt").write_text("3 3\n")
-    (prep / "cases" / "0001.txt").write_text("4 4\n")
-    return prep
+#: vis stub: score = the integer the solver printed, doubled; reject 'BAD'
+VIS_STUB = f"""#!{sys.executable}
+import sys
+out = open(sys.argv[2]).read().strip()
+if out == "BAD":
+    print("invalid output")
+else:
+    print(f"Score = {{int(out) * 2}}")
+"""
 
 
-class _FakeResult:
-    def __init__(self, score):
-        self.overall_absolute_score = score
-        self.overall_judge_result = "JudgeResult.ACCEPTED"
-        self.case_results = [object(), object()]
+def _stage(root, score_type="maximize", problem_type="batch",
+           n_private=3, time_limit=1.0):
+    pub = root / "public" / TASK / "prepared"
+    (pub / "cases").mkdir(parents=True)
+    pub.joinpath("problem.md").write_text(
+        "# Toy AHC\n\nMaximise goodness. Score = sum of goodness.\n")
+    pub.joinpath("meta.json").write_text(json.dumps(
+        {"problem_id": TASK, "problem_type": problem_type,
+         "score_type": score_type, "time_limit_s": time_limit,
+         "n_public_cases": 2, "n_private_cases": n_private,
+         "public_seeds": [0, 1], "seed_regime": "lite"}))
+    (pub / "cases" / "case_0000.txt").write_text("3\n")
+    (pub / "cases" / "case_0001.txt").write_text("4\n")
+
+    priv = root / "private" / TASK
+    (priv / "cases").mkdir(parents=True)
+    (priv / "bin").mkdir()
+    for i in range(n_private):
+        (priv / "cases" / f"case_{i:04d}.txt").write_text(f"{i + 10}\n")
+    vis = priv / "bin" / "vis"
+    vis.write_text(VIS_STUB)
+    vis.chmod(vis.stat().st_mode | stat.S_IEXEC)
+    return pub, priv
 
 
-class _FakeSession:
-    """Stands in for ale_bench.start(...): records calls, serves a score."""
+def _bench(tmp_path, **kw):
+    return ALEBench(data_dir=str(tmp_path / "public"),
+                    private_data_dir=str(tmp_path / "private"),
+                    sandbox=False, **kw)
 
-    def __init__(self, score=1234):
-        self.score = score
-        self.evaluated = None
-        self.closed = False
 
-    def private_eval(self, code, code_language):
-        self.evaluated = (code, code_language)
-        return _FakeResult(self.score), 42, 1500
-
-    def close(self):
-        self.closed = True
-
+# ------------------------------------------------------------------ tasks
 
 def test_task_list_is_the_full_official_set(tmp_path):
-    bench = ALEBench(data_dir=str(tmp_path))
+    bench = _bench(tmp_path)
     assert tuple(bench.list_tasks()) == ALL_PROBLEMS
     assert len(ALL_PROBLEMS) == 40
     assert len(LITE_PROBLEMS) == 10 and set(LITE_PROBLEMS) <= set(ALL_PROBLEMS)
 
 
-def test_private_data_dir_is_refused_loudly():
-    """get_benchmark(**kwargs) parity (cubic P1 on PR #12): the kwarg is
-    accepted by signature but there IS no private tree — passing one is a
-    config error, not a silent ignore."""
-    with pytest.raises(ValueError, match="no private data tree"):
-        ALEBench(data_dir="/tmp/x", private_data_dir="/tmp/private")
-    ALEBench(data_dir="/tmp/x", private_data_dir=None)   # None is fine
+def test_private_root_defaults_to_sibling(tmp_path):
+    bench = ALEBench(data_dir=str(tmp_path / "public"), sandbox=False)
+    assert bench.private_dir == tmp_path / "private"
 
 
 def test_load_task_view_and_contract(tmp_path):
-    prep = _stage(tmp_path)
-    bench = ALEBench(data_dir=str(tmp_path))
+    pub, priv = _stage(tmp_path)
+    bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     assert task.submission_filename == "submission.py"
-    assert "Place things well" in task.goal            # official statement
+    assert "Maximise goodness" in task.goal            # official statement
     assert "submission.py" in task.goal                # our contract
-    assert str(prep / "cases") in task.goal            # public cases path
+    assert str(pub / "cases") in task.goal             # public cases path
     assert task.metadata["score_type"] == "maximize"
-    assert task.metadata["staged_seed_regime"] == "lite"
+    assert task.metadata["seed_regime"] == "lite"
     assert task.metadata["data_version"]
-    # nothing private exists anywhere under the staged tree
-    names = [p.name for p in prep.rglob("*")]
-    assert not any("private" in n or "answer" in n for n in names)
+    # the goal and the public tree never leak the private side (macOS tmp
+    # paths contain "/private/", so check real markers, not the substring)
+    assert str(priv) not in task.goal
+    assert "private_seeds" not in (pub / "meta.json").read_text()
+    names = [p.name for p in pub.rglob("*")]
+    assert "seeds.json" not in names and "bin" not in names
 
 
 def test_load_task_pins_data_version(tmp_path):
-    """Trust-on-first-use (cubic P2 on PR #12): first load stamps, a later
-    load after silent data change fails LOUDLY."""
-    prep = _stage(tmp_path)
-    bench = ALEBench(data_dir=str(tmp_path))
+    pub, _ = _stage(tmp_path)
+    bench = _bench(tmp_path)
     bench.load_task(TASK)                              # stamps .data_version
-    assert (prep / ".data_version").exists()
-    (prep / "cases" / "0000.txt").write_text("999 999\n")   # silent drift
+    (pub / "cases" / "case_0000.txt").write_text("999\n")   # silent drift
     with pytest.raises(RuntimeError, match="data_version mismatch"):
         bench.load_task(TASK)
 
 
-def test_load_task_refuses_unknown_and_unprepared(tmp_path):
-    bench = ALEBench(data_dir=str(tmp_path))
+def test_load_task_refuses_unknown_unprepared_and_reactive(tmp_path):
+    bench = _bench(tmp_path)
     with pytest.raises(RuntimeError, match="unknown"):
         bench.load_task("ahc999")
     with pytest.raises(RuntimeError, match="not prepared"):
         bench.load_task(TASK)
+    _stage(tmp_path, problem_type="reactive")
+    with pytest.raises(RuntimeError, match="REACTIVE"):
+        bench.load_task(TASK)
 
+
+# --------------------------------------------------------------- verdicts
 
 def test_validate_submission_format_only(tmp_path):
     _stage(tmp_path)
-    bench = ALEBench(data_dir=str(tmp_path))
+    bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.py"
 
     ok, reason = bench.validate_submission(task, sub)
     assert not ok and "missing" in reason
-    (tmp_path / "subdir.py").mkdir()                   # a DIRECTORY (cubic P3)
+    (tmp_path / "subdir.py").mkdir()
     ok, reason = bench.validate_submission(task, tmp_path / "subdir.py")
     assert not ok and "regular file" in reason
     sub.write_text("")
@@ -130,81 +143,108 @@ def test_validate_submission_format_only(tmp_path):
     assert ok and reason is None
 
 
-def test_grade_runs_the_official_judge_and_closes_the_session(tmp_path):
+# ---------------------------------------------------------------- grading
+
+def test_grade_executes_and_scores_with_the_official_interface(tmp_path):
+    """Echo solver over cases 10/11/12 -> stub vis doubles -> 20+22+24."""
     _stage(tmp_path)
-    fake = _FakeSession(score=98765)
-    bench = ALEBench(data_dir=str(tmp_path),
-                     session_factory=lambda pid: fake)
+    bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.py"
-    sub.write_text("print(input())\n")
+    sub.write_text("print(input().strip())\n")
     score = bench.grade(task, sub)
-    assert score.valid and score.value == 98765.0
-    assert score.is_higher_better is True              # maximize problem
-    assert fake.evaluated == ("print(input())\n", "python")
-    assert fake.closed                                 # session released
-    assert score.details["rank"] == 42
-    assert score.details["seed_regime"] == "lite"      # default regime
+    assert score.valid and score.value == 66.0
+    assert score.is_higher_better is True
+    d = score.details
+    assert d["n_cases"] == 3 and d["n_tle"] == d["n_error"] == d["n_rejected"] == 0
+    assert d["python_time_scale"] == PYTHON_TIME_SCALE
+    assert d["seed_regime"] == "lite"
 
 
-def test_grade_direction_follows_score_type(tmp_path):
-    _stage(tmp_path, score_type="minimize")
-    bench = ALEBench(data_dir=str(tmp_path),
-                     session_factory=lambda pid: _FakeSession(score=10))
+def test_grade_counts_tle_error_and_rejected_cases(tmp_path):
+    """Case 10 answers, case 11 crashes, case 12 emits a rejected output —
+    maximize: failures contribute 0, run stays valid."""
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     sub = tmp_path / "submission.py"
-    sub.write_text("print(1)\n")
+    sub.write_text(
+        "n = int(input())\n"
+        "if n == 11: raise SystemExit(3)\n"
+        "print('BAD' if n == 12 else n)\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 20.0          # only case 10 scores
+    assert score.details["n_error"] == 1
+    assert score.details["n_rejected"] == 1
+
+
+def test_grade_tle_is_killed_and_scored_zero(tmp_path):
+    _stage(tmp_path, time_limit=0.2)                    # 0.2s * scale = 0.6s
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text(
+        "import time\n"
+        "n = int(input())\n"
+        "if n == 10: time.sleep(60)\n"
+        "print(n)\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 46.0          # 22 + 24
+    assert score.details["n_tle"] == 1
+
+
+def test_grade_minimize_with_failures_is_invalid_not_flattering(tmp_path):
+    """On a minimize problem a failed case contributing 0 would IMPROVE the
+    total — must grade invalid instead of reporting a misleading number."""
+    _stage(tmp_path, score_type="minimize")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("n = int(input())\n"
+                   "if n == 11: raise SystemExit(3)\n"
+                   "print(n)\n")
+    score = bench.grade(task, sub)
+    assert not score.valid
+    assert "minimize" in score.details["reason"]
+    # clean minimize submissions still grade, lower-better
+    sub.write_text("print(input().strip())\n")
     score = bench.grade(task, sub)
     assert score.valid and score.is_higher_better is False
 
 
-def test_grade_unreadable_submission_is_invalid_not_a_crash(tmp_path):
-    """cubic P2 on PR #12: a directory (or unreadable path) at the submission
-    location must grade invalid BEFORE the external judge is started."""
+def test_grade_all_cases_failing_is_invalid(tmp_path):
     _stage(tmp_path)
-    calls = []
-    bench = ALEBench(data_dir=str(tmp_path),
-                     session_factory=lambda pid: calls.append(pid))
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("raise SystemExit(1)\n")
+    score = bench.grade(task, sub)
+    assert not score.valid and "no case produced" in score.details["reason"]
+
+
+def test_grade_without_staged_private_tree_is_invalid(tmp_path):
+    pub, priv = _stage(tmp_path)
+    import shutil as _sh
+    _sh.rmtree(priv)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    score = bench.grade(task, sub)
+    assert not score.valid
+    assert "not staged" in score.details["reason"]
+
+
+def test_grade_unreadable_submission_is_invalid(tmp_path):
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
     task = bench.load_task(TASK)
     (tmp_path / "submission.py").mkdir()               # directory, not a file
     score = bench.grade(task, tmp_path / "submission.py")
     assert not score.valid
-    assert "unreadable" in score.details["reason"]
-    assert calls == []                                 # judge never started
 
 
-def test_grade_without_judge_is_invalid_not_a_crash(tmp_path):
-    _stage(tmp_path)
-
-    def no_judge(pid):
-        raise RuntimeError("docker daemon not running")
-
-    bench = ALEBench(data_dir=str(tmp_path), session_factory=no_judge)
-    task = bench.load_task(TASK)
-    sub = tmp_path / "submission.py"
-    sub.write_text("print(1)\n")
-    score = bench.grade(task, sub)
-    assert not score.valid
-    assert "judge unavailable" in score.details["reason"]
-
-
-def test_grade_judge_failure_mid_eval_is_invalid_and_closes(tmp_path):
-    _stage(tmp_path)
-
-    class Exploding(_FakeSession):
-        def private_eval(self, code, code_language):
-            raise TimeoutError("judge container hung")
-
-    fake = Exploding()
-    bench = ALEBench(data_dir=str(tmp_path),
-                     session_factory=lambda pid: fake)
-    task = bench.load_task(TASK)
-    sub = tmp_path / "submission.py"
-    sub.write_text("print(1)\n")
-    score = bench.grade(task, sub)
-    assert not score.valid and "private_eval failed" in score.details["reason"]
-    assert fake.closed
-
+# ----------------------------------------------------------------- splits
 
 def test_split_facts_cover_every_problem_and_mark_the_lite_subset():
     from arbench.core.splits import load_split_meta
@@ -213,17 +253,3 @@ def test_split_facts_cover_every_problem_and_mark_the_lite_subset():
     assert {m["family"] for m in meta.values()} == {"code"}
     lite_marked = {tid for tid, m in meta.items() if m.get("subset") == "lite"}
     assert lite_marked == set(LITE_PROBLEMS)
-
-
-def test_reactive_problems_are_refused(tmp_path):
-    """Our stdin->stdout contract serves BATCH problems only; a reactive
-    problem (tester conversation) must refuse at load, not fail cryptically
-    at self-eval or judging."""
-    prep = _stage(tmp_path)
-    meta = json.loads((prep / "meta.json").read_text())
-    meta["problem_type"] = "reactive"
-    (prep / "meta.json").write_text(json.dumps(meta))
-    (prep / ".data_version").unlink(missing_ok=True)
-    bench = ALEBench(data_dir=str(tmp_path))
-    with pytest.raises(RuntimeError, match="REACTIVE"):
-        bench.load_task(TASK)
