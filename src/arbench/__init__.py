@@ -16,7 +16,7 @@ from arbench.core.result import Score
 from arbench.core.benchmark import Benchmark
 from arbench.core.splits import assign_roles, families, split_of, tasks_with_role
 
-BENCHMARK_NAMES = ("mlebench_lite", "openml_tabular")
+BENCHMARK_NAMES = ("ale_bench", "mlebench_lite", "openml_tabular")
 
 
 def get_benchmark(name: str, **kwargs) -> Benchmark:
@@ -27,6 +27,9 @@ def get_benchmark(name: str, **kwargs) -> Benchmark:
     used. kwargs are the plugin's (data_dir, private_data_dir); both default
     to their env vars ($MLEBENCH_DATA_DIR / $OPENML_DATA_DIR etc.).
     """
+    if name == "ale_bench":
+        from arbench.benchmarks.ale_bench.benchmark import ALEBench
+        return ALEBench(**kwargs)
     if name == "mlebench_lite":
         from arbench.benchmarks.mlebench_lite.benchmark import MLEBenchLite
         return MLEBenchLite(**kwargs)

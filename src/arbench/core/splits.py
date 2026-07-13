@@ -34,7 +34,7 @@ from typing import Any, Optional
 import yaml
 
 ROLES = ("bank", "val", "test")
-BENCHMARKS = ("openml_tabular", "mlebench_lite")
+BENCHMARKS = ("openml_tabular", "mlebench_lite", "ale_bench")
 
 TaskKey = tuple[str, str]   # (benchmark, task_id)
 

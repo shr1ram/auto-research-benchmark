@@ -24,6 +24,10 @@ dependencies = [
 #   uv sync --extra mlebench   (editable path dep on vendor/mle-bench, see
 #   [tool.uv.sources]; the checkout itself is gitignored — vendor/README.md)
 mlebench = ["mlebench"]
+# OPTIONAL one-off cross-check of our self-contained ale_bench grader
+# against Sakana's official Docker judge (any Docker host; never on a
+# pipeline path):  uv sync --extra ale-crosscheck
+ale-crosscheck = ["ale-bench @ git+https://github.com/SakanaAI/ALE-Bench.git@8ae5b832227e50729f7673f248565c319c301264"]
 dev = ["pytest>=7.0", "pytest-timeout>=2.0"]
 
 [project.scripts]
@@ -38,6 +42,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "arbench.benchmarks.openml_tabular" = ["splits.yaml"]
 "arbench.benchmarks.mlebench_lite" = ["splits.yaml"]
+"arbench.benchmarks.ale_bench" = ["splits.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
