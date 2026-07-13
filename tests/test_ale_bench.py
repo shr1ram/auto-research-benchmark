@@ -32,6 +32,24 @@ else:
 """
 
 
+#: tester stub: reads the case N from ITS stdin, feeds N to the solver
+#: (argv[1:] = the solver command), reads the solver's reply, scores it
+#: (reply * 10) to stderr like the real tester. A reply of 'X' = invalid.
+TESTER_STUB = f"""#!{sys.executable}
+import sys, subprocess
+n = sys.stdin.readline().strip()
+p = subprocess.Popen(sys.argv[1:], stdin=subprocess.PIPE,
+                     stdout=subprocess.PIPE, text=True)
+p.stdin.write(n + chr(10)); p.stdin.flush()
+reply = p.stdout.readline().strip()
+p.wait()
+if reply == "X" or not reply:
+    sys.stderr.write("invalid interaction" + chr(10))
+else:
+    sys.stderr.write(f"Score = {{int(reply) * 10}}" + chr(10))
+"""
+
+
 def _stage(root, score_type="maximize", problem_type="batch",
            n_private=3, time_limit=1.0):
     pub = root / "public" / TASK / "prepared"
@@ -51,9 +69,16 @@ def _stage(root, score_type="maximize", problem_type="batch",
     (priv / "bin").mkdir()
     for i in range(n_private):
         (priv / "cases" / f"case_{i:04d}.txt").write_text(f"{i + 10}\n")
-    vis = priv / "bin" / "vis"
-    vis.write_text(VIS_STUB)
-    vis.chmod(vis.stat().st_mode | stat.S_IEXEC)
+    if problem_type == "reactive":
+        (pub / "bin").mkdir()
+        for base in (pub, priv):
+            t = base / "bin" / "tester"
+            t.write_text(TESTER_STUB)
+            t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    else:
+        vis = priv / "bin" / "vis"
+        vis.write_text(VIS_STUB)
+        vis.chmod(vis.stat().st_mode | stat.S_IEXEC)
     return pub, priv
 
 
@@ -105,15 +130,62 @@ def test_load_task_pins_data_version(tmp_path):
         bench.load_task(TASK)
 
 
-def test_load_task_refuses_unknown_unprepared_and_reactive(tmp_path):
+def test_load_task_refuses_unknown_and_unprepared(tmp_path):
     bench = _bench(tmp_path)
     with pytest.raises(RuntimeError, match="unknown"):
         bench.load_task("ahc999")
     with pytest.raises(RuntimeError, match="not prepared"):
         bench.load_task(TASK)
+
+
+def test_reactive_task_view_carries_the_interactive_contract(tmp_path):
     _stage(tmp_path, problem_type="reactive")
-    with pytest.raises(RuntimeError, match="REACTIVE"):
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    assert task.metadata["problem_type"] == "reactive"
+    assert "INTERACTIVE" in task.goal and "flush" in task.goal.lower()
+    assert "tester" in task.goal            # the self-eval command names it
+
+
+def test_reactive_without_public_tester_is_refused(tmp_path):
+    """A reactive problem staged without the public tester (old batch-only
+    staging) can't run its self-eval — refuse with a re-prepare hint."""
+    _stage(tmp_path, problem_type="reactive")
+    import shutil as _sh
+    _sh.rmtree(tmp_path / "public" / TASK / "prepared" / "bin")
+    (tmp_path / "public" / TASK / "prepared" / ".data_version").unlink(missing_ok=True)
+    bench = _bench(tmp_path)
+    with pytest.raises(RuntimeError, match="tester is not staged"):
         bench.load_task(TASK)
+
+
+def test_grade_reactive_runs_the_tester_and_scores(tmp_path):
+    """Echo solver: reads N, prints N -> tester scores N*10. Private cases
+    10/11/12 -> 100+110+120 = 330."""
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys\nprint(sys.stdin.readline().strip()); "
+                   "sys.stdout.flush()\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 330.0
+    assert score.details["problem_type"] == "reactive"
+    assert score.details["n_rejected"] == 0
+
+
+def test_grade_reactive_invalid_interaction_is_rejected(tmp_path):
+    """A solver that replies 'X' (invalid move) on case 11 -> that case
+    rejected, others score."""
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys\nn=int(sys.stdin.readline())\n"
+                   "print('X' if n==11 else n); sys.stdout.flush()\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 220.0     # 100 + 120
+    assert score.details["n_rejected"] == 1
 
 
 # --------------------------------------------------------------- verdicts

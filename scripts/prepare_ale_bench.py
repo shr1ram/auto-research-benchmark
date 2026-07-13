@@ -123,6 +123,16 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
         (priv / ".data_version").unlink(missing_ok=True)
         private_version = verify_data_version(priv)
 
+        # reactive problems: the agent's self-eval runs the tester on the
+        # PUBLIC cases, so stage the tester publicly too. It reads its case
+        # from stdin and carries no private data -> firewall-safe. (batch
+        # problems need no public binary — vis is grader-only.)
+        if data["metadata"]["problem_type"] == "reactive":
+            (prep / "bin").mkdir(parents=True, exist_ok=True)
+            built = bin_dir / "tester"
+            if built.exists():
+                shutil.copy2(built, prep / "bin" / "tester")
+
         # public view: statement + meta (public seeds ONLY)
         shutil.copy(src / "statement_en.md", prep / "problem.md")
         meta = {"problem_id": pid,
