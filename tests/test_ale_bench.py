@@ -339,15 +339,15 @@ def test_grade_unreadable_submission_is_invalid(tmp_path):
 
 # ----------------------------------------------------------------- splits
 
-def test_reactive_problems_are_excluded_from_the_draw():
-    """The 12 reactive problems can't be served by the batch contract, so
-    they are excluded -> assign_roles draws only over the 28 batch problems."""
+def test_all_40_problems_are_in_the_draw():
+    """Reactive support (PR #14) means ALL 40 problems — batch AND reactive —
+    are runnable, so none are excluded and the draw covers the full set."""
     from arbench.core.splits import families, assign_roles
     fams = families(("ale_bench",))
-    assert len(fams["code"]) == 28              # 40 - 12 reactive
+    assert len(fams["code"]) == 40
     roles = assign_roles({"bank": 0.55, "val": 0.30, "test": 0.15}, seed=0)
     drawn = {t for (b, t), r in roles.items() if b == "ale_bench"}
-    assert len(drawn) == 28
+    assert len(drawn) == 40
 
 
 def test_split_facts_cover_every_problem_and_mark_the_lite_subset():
