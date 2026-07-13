@@ -20,6 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ALE-Bench preparation (scripts/prepare_ale_bench.py): the dataset is
+# Xet-backed, so hf_hub_download is required to fetch problem zips.
+ale-prep = ["huggingface_hub>=0.20"]
 # Pulled in only when actually running the MLE-bench benchmark on a box:
 #   uv sync --extra mlebench   (editable path dep on vendor/mle-bench, see
 #   [tool.uv.sources]; the checkout itself is gitignored — vendor/README.md)

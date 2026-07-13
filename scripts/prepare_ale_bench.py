@@ -27,23 +27,31 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path
 
 from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS, LITE_PROBLEMS
 from arbench.core.data_version import verify_data_version
 
-HF_URL = "https://huggingface.co/datasets/SakanaAI/ALE-Bench/resolve/main/{pid}.zip"
+HF_REPO = "SakanaAI/ALE-Bench"
 TOOL_BINARIES = ("gen", "vis", "tester")
 
 
 def _fetch_zip(pid: str, zips_dir: Path) -> Path:
+    """Fetch <pid>.zip via huggingface_hub. The dataset is Xet-backed, so the
+    plain resolve/main/*.zip URL redirects to a Xet CDN that raw urllib/curl
+    can't authenticate against (AccessDenied) — hf_hub_download speaks the Xet
+    protocol. Copies into zips_dir (grader-only: data.json has private seeds).
+    """
     zips_dir.mkdir(parents=True, exist_ok=True)
     dest = zips_dir / f"{pid}.zip"
-    if not dest.exists():
-        print(f"[prepare] {pid}: downloading zip")
-        urllib.request.urlretrieve(HF_URL.format(pid=pid), dest)
+    if dest.exists():
+        return dest
+    print(f"[prepare] {pid}: downloading zip")
+    from huggingface_hub import hf_hub_download
+    cached = hf_hub_download(repo_id=HF_REPO, filename=f"{pid}.zip",
+                             repo_type="dataset")
+    shutil.copy2(cached, dest)   # into the grader-only tree, out of the cache
     return dest
 
 
