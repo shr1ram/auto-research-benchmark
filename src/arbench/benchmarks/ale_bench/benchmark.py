@@ -101,6 +101,12 @@ _CONTRACT = """
   number (negate the mean if the problem minimises).
 - The hidden test set uses the same case generator; your reported score is
   your own estimate of your solver's true quality.
+- Your script MUST END by writing result.json containing a NUMERIC "score".
+  A run that exits 0 without a numeric score in result.json is INVALID and
+  scores nothing, however good the solver was: make sure the scoring block is
+  always reached (not left unreachable after an early return/exit), and that
+  the value is a real number — NaN and inf are NOT numeric, so guard
+  degenerate cases before writing.
 """
 
 _CONTRACT_REACTIVE = """
@@ -124,6 +130,12 @@ _CONTRACT_REACTIVE = """
   number (negate the mean if the problem minimises).
 - The hidden test set uses the same generator; your reported score is your
   own estimate of your solver's true quality.
+- Your script MUST END by writing result.json containing a NUMERIC "score".
+  A run that exits 0 without a numeric score in result.json is INVALID and
+  scores nothing, however good the solver was: make sure the scoring block is
+  always reached (not left unreachable after an early return/exit), and that
+  the value is a real number — NaN and inf are NOT numeric, so guard
+  degenerate cases before writing.
 """
 
 
