@@ -22,10 +22,18 @@ class Task:
 
     # Natural-language statement handed to the autoresearch system. For MLE-bench
     # this is the competition description + the data dictionary.
+    # CONTRACT: this must be the COMPLETE, self-contained task statement —
+    # consumers (agent prompts AND memory writers, via arloop's task_presented
+    # trace event) use it VERBATIM and may never parse its internal structure.
+    # Benchmark-format knowledge (separators, section layout) stays in the
+    # plugin that authored it; onboarding a new benchmark means authoring goal
+    # and eval correctly here, never changing a consumer.
     goal: str
 
     # How success is measured, in prose (e.g. "AUC, higher is better"). The
     # machine-readable grading lives in the Benchmark; this is for the model.
+    # Same contract as goal: consumed verbatim (writers render it as an
+    # EVALUATION line), so it must be self-contained — include the direction.
     eval: str
 
     # Absolute path to the prepared input data the system may read (read-only).
