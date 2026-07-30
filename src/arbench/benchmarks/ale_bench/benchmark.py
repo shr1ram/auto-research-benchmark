@@ -95,6 +95,8 @@ _CONTRACT = """
   SINGLE-FILE Python 3 program that reads ONE input case from standard input
   and writes the answer to standard output ({time_note}).
 - The public input cases are the files under: {cases_dir}
+  (named case_<i>.txt — read EVERY file in that directory; do not
+  assume any other naming pattern).
   Run your solver on every one of them, compute your score for each case
   using the scoring rule defined in the statement above, and write the MEAN
   into result.json. This problem {direction_note} — report a higher-is-better
