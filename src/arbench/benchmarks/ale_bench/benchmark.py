@@ -62,7 +62,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from arbench.core.benchmark import Benchmark
 from arbench.core.data_version import verify_data_version
@@ -193,6 +193,22 @@ def _run_case(submission: Path, case_file: Path, out_path: Path,
     if out_path.stat().st_size > MAX_OUTPUT_BYTES:
         return "too_long"
     return "ok"
+
+
+#: per-case outcomes recorded in Score.details["cases"]. "rejected" covers
+#: every way a run produced no usable answer (invalid output, runaway stdout,
+#: refused interaction) — on a RELATIVE contest that is a rejection, NOT a
+#: zero score, and conflating the two inverts a minimize task's result.
+_CASE_STATUSES = ("ok", "tle", "error", "rejected")
+
+
+def _case_row(case_file: Path, status: str, score: Optional[int]) -> dict:
+    """One row of Score.details["cases"]: the case's own name (the private
+    seed order is meaningful), its outcome, and its official score when it
+    earned one."""
+    assert status in _CASE_STATUSES, f"unknown case status {status!r}"
+    return {"case": case_file.name, "status": status,
+            "score": score if status == "ok" else None}
 
 
 def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
@@ -419,6 +435,13 @@ class ALEBench(Benchmark):
         sandboxed = self.sandbox and bool(_sandbox_prefix())
 
         total, n_tle, n_error, n_rejected = 0, 0, 0, 0
+        # Per-case rows, in case_files order. The SUM alone is not enough to
+        # reconstruct the official ALE-Bench metric: the relative contests
+        # re-normalise per case, and there a REJECTED case is not a zero-cost
+        # answer (see the `status` note on _CASE_STATUSES). Recovering this
+        # after the fact means re-running agent code over the private cases,
+        # so it is recorded once, here, where it is already known.
+        cases: list[dict[str, Any]] = []
         for case_file in case_files:
             if reactive:
                 # the tester runs+scores in one call; TLE vs rejected
@@ -427,30 +450,33 @@ class ALEBench(Benchmark):
                     scorer, sub, case_file, time_limit, sandboxed)
                 if outcome == "tle":
                     n_tle += 1
-                    continue
-                if case_score is None:
+                elif case_score is None:
+                    outcome = "rejected"
                     n_rejected += 1
-                    continue
-                total += case_score
+                else:
+                    total += case_score
+                cases.append(_case_row(case_file, outcome, case_score))
                 continue
+            case_score = None
             with tempfile.TemporaryDirectory(prefix="ale-grade-") as td:
                 out_path = Path(td) / "case.out"
                 outcome = _run_case(sub, case_file, out_path, time_limit,
                                     sandboxed)
-                if outcome == "tle":
-                    n_tle += 1
-                    continue
-                if outcome == "error":
-                    n_error += 1
-                    continue
-                if outcome == "too_long":
-                    n_rejected += 1          # runaway printer: rejected case
-                    continue
-                case_score = _score_case(scorer, case_file, out_path)
-            if case_score is None:
-                n_rejected += 1              # invalid answer: scores 0
-                continue
-            total += case_score
+                if outcome == "ok":
+                    case_score = _score_case(scorer, case_file, out_path)
+            if outcome == "tle":
+                n_tle += 1
+            elif outcome == "error":
+                n_error += 1
+            elif outcome == "too_long":
+                outcome = "rejected"         # runaway printer: rejected case
+                n_rejected += 1
+            elif case_score is None:
+                outcome = "rejected"         # invalid answer: scores 0
+                n_rejected += 1
+            else:
+                total += case_score
+            cases.append(_case_row(case_file, outcome, case_score))
         details = {"n_cases": len(case_files), "n_tle": n_tle,
                    "n_error": n_error, "n_rejected": n_rejected,
                    "seed_regime": meta.get("seed_regime"),
@@ -461,14 +487,17 @@ class ALEBench(Benchmark):
                    "problem_type": meta.get("problem_type", "batch"),
                    "score_type": meta.get("score_type")}
         n_failed = n_tle + n_error + n_rejected
+        # the reason strings interpolate the AGGREGATE details only: `cases`
+        # is per-case and would bloat a human-readable reason into KBs
         if n_failed == len(case_files):
             return Score.invalid("no case produced a scoreable output "
-                                 f"({details})", is_higher_better=hb)
+                                 f"({details})", is_higher_better=hb,
+                                 cases=cases)
         if n_failed and not hb:
             # on a MINIMIZE problem a failed case contributing 0 would
             # IMPROVE the total — never report a misleading number
             return Score.invalid(
                 f"{n_failed} failed case(s) on a minimize problem ({details})",
-                is_higher_better=hb)
+                is_higher_better=hb, cases=cases)
         return Score(value=float(total), valid=True, is_higher_better=hb,
-                     details=details)
+                     details={**details, "cases": cases})

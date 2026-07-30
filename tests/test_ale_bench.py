@@ -408,3 +408,127 @@ def test_grade_detects_private_tree_drift(tmp_path):
     sub.write_text("print(input().strip())\n")
     score = bench.grade(task, sub)
     assert not score.valid and "drift" in score.details["reason"]
+
+
+# --------------------------------------------------------- per-case details
+# The SUM alone cannot reconstruct the official ALE-Bench metric: the relative
+# contests re-normalise per case, and there a REJECTED case is not a zero-cost
+# answer. These pin the per-case record that makes the metric reconstructible
+# without re-running agent code over the private cases.
+def test_details_carry_one_row_per_case_in_case_order(tmp_path):
+    """Cases 10/11/12 -> stub vis doubles -> 20/22/24, in the case order."""
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    score = bench.grade(task, sub)
+    assert score.details["cases"] == [
+        {"case": "case_0000.txt", "status": "ok", "score": 20},
+        {"case": "case_0001.txt", "status": "ok", "score": 22},
+        {"case": "case_0002.txt", "status": "ok", "score": 24}]
+    # the per-case scores must reconstruct the aggregate exactly
+    assert sum(c["score"] for c in score.details["cases"]) == score.value
+
+
+def test_per_case_statuses_distinguish_error_from_rejected(tmp_path):
+    """Case 10 answers, case 11 crashes, case 12 emits a rejected output.
+    An invalid answer is REJECTED, not a zero score — conflating the two is
+    what inverts a minimize task."""
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text(
+        "n = int(input())\n"
+        "if n == 11: raise SystemExit(3)\n"
+        "print('BAD' if n == 12 else n)\n")
+    score = bench.grade(task, sub)
+    assert score.details["cases"] == [
+        {"case": "case_0000.txt", "status": "ok", "score": 20},
+        {"case": "case_0001.txt", "status": "error", "score": None},
+        {"case": "case_0002.txt", "status": "rejected", "score": None}]
+    # the rows must agree with the aggregate counters they sit beside
+    d = score.details
+    assert d["n_error"] == sum(1 for c in d["cases"] if c["status"] == "error")
+    assert d["n_rejected"] == sum(1 for c in d["cases"]
+                                  if c["status"] == "rejected")
+
+
+def test_a_timed_out_case_is_recorded_as_tle(tmp_path):
+    _stage(tmp_path, time_limit=0.3)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import time\n"
+                   "n = int(input())\n"
+                   "if n == 11: time.sleep(30)\n"
+                   "print(n)\n")
+    score = bench.grade(task, sub)
+    rows = {c["case"]: c["status"] for c in score.details["cases"]}
+    assert rows["case_0001.txt"] == "tle"
+    assert score.details["n_tle"] == 1
+
+
+def test_an_invalid_minimize_grade_still_carries_per_case_rows(tmp_path):
+    """A minimize task with any failed case returns invalid — but the
+    per-case record is exactly what official relative scoring needs, so it
+    must survive the invalid return."""
+    _stage(tmp_path, score_type="minimize")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("n = int(input())\n"
+                   "print('BAD' if n == 12 else n)\n")
+    score = bench.grade(task, sub)
+    assert not score.valid and score.value is None
+    assert [c["status"] for c in score.details["cases"]] == [
+        "ok", "ok", "rejected"]
+    # the reason stays human-sized: the per-case list is NOT interpolated
+    assert "case_0000.txt" not in score.details["reason"]
+
+
+def test_an_all_failed_grade_carries_per_case_rows(tmp_path):
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("raise SystemExit(1)\n")
+    score = bench.grade(task, sub)
+    assert not score.valid
+    assert [c["status"] for c in score.details["cases"]] == ["error"] * 3
+    assert "case_0000.txt" not in score.details["reason"]
+
+
+def test_early_invalid_returns_carry_no_case_rows(tmp_path):
+    """Nothing was graded, so there is no per-case record to report — the
+    key must be ABSENT rather than an empty list that reads as '0 cases'."""
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    score = bench.grade(task, tmp_path / "does-not-exist.py")
+    assert not score.valid and "cases" not in score.details
+
+
+def test_per_case_rows_are_json_serialisable(tmp_path):
+    """The rows travel to the consuming loop's manifest as JSON."""
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    score = bench.grade(task, sub)
+    assert json.loads(json.dumps(score.details["cases"])) \
+        == score.details["cases"]
+
+
+def test_reactive_grading_records_per_case_rows(tmp_path):
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip(), flush=True)\n")
+    score = bench.grade(task, sub)
+    assert len(score.details["cases"]) == 3
+    assert all(c["status"] in ("ok", "tle", "error", "rejected")
+               for c in score.details["cases"])
