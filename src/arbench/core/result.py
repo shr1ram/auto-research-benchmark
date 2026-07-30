@@ -18,6 +18,14 @@ class Score:
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def invalid(cls, reason: str, is_higher_better: bool = True) -> "Score":
+    def invalid(cls, reason: str, is_higher_better: bool = True,
+                cases: Optional[list] = None) -> "Score":
+        """`cases` carries per-case grading rows when the grader got far
+        enough to produce them: an invalid aggregate can still be a fully
+        informative per-case record (e.g. a minimize task refused because
+        some cases were rejected)."""
+        details: dict[str, Any] = {"reason": reason}
+        if cases is not None:
+            details["cases"] = cases
         return cls(value=None, valid=False, is_higher_better=is_higher_better,
-                   details={"reason": reason})
+                   details=details)
