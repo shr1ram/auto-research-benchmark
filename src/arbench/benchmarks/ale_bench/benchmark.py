@@ -95,6 +95,8 @@ _CONTRACT = """
   SINGLE-FILE Python 3 program that reads ONE input case from standard input
   and writes the answer to standard output ({time_note}).
 - The public input cases are the files under: {cases_dir}
+  (named case_<i>.txt — read EVERY file in that directory; do not
+  assume any other naming pattern).
   Run your solver on every one of them, compute your score for each case
   using the scoring rule defined in the statement above, and write the MEAN
   into result.json. This problem {direction_note} — report a higher-is-better
@@ -124,7 +126,9 @@ _CONTRACT_REACTIVE = """
 - The public cases + the official judge (`tester`) are staged for you. Score
   your solver on each public case by running:
       {tester} {python} submission.py < <case-file>
-  (the case files are under {cases_dir}); the tester prints "Score = N" on
+  (the case files are under {cases_dir}, named case_<i>.txt — read EVERY
+  file in that directory; do not assume any other naming pattern); the
+  tester prints "Score = N" on
   its standard error. Write the MEAN score across the public cases into
   result.json. This problem {direction_note} — report a higher-is-better
   number (negate the mean if the problem minimises).
