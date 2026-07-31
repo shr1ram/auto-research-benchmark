@@ -42,7 +42,9 @@ also scales time per language), score each (input, output) with the official
 The submission is agent code: it executes inside a bwrap sandbox when
 available (same posture as attempt execution), plain process-group subprocess
 otherwise. TLE / nonzero exit / unparsable score = 0 for that case, counted
-in Score.details.
+in Score.details. Cases are graded CONCURRENTLY (`grade_workers()`): each is
+an independent (solver, scorer) pair over its own private tempdir, so the
+only coupling is the box's cores — which is what bounds the worker count.
 
 FIREWALL: the dataset zips contain the private seed lists (data.json), so
 raw zips and everything derived from private seeds live ONLY under the
@@ -61,6 +63,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -86,6 +90,90 @@ _SCORE_RE = re.compile(r"Score\s*=\s*(-?\d+)")
 #: cap on a solver's stdout per case — AHC answers are KBs; a runaway
 #: printer must become a rejected case, not grader OOM / a full disk
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+
+#: hard ceiling on grading concurrency. Measured (rq1-ale-pilot-v3 A/B): at
+#: P<=8 scores are bit-identical to sequential on the deterministic-solver
+#: population (5.81x median speedup); at P>=16 deadline-ANNEALING solvers
+#: degrade (-0.73% at P=16, -1.06% at P=24, against a 0.000% sequential noise
+#: floor) because each solver process itself occupies ~1.3-1.5 cores. Raising
+#: this re-enters measured degradation, so it is a ceiling, not a tuning knob.
+MAX_GRADE_WORKERS = 8
+
+#: cores one ALE solver process occupies (measured 1.3-1.5; 2 is the
+#: conservative divisor). Worker count is a CORE SHARE divided by this.
+CORES_PER_SOLVER = 2
+
+#: how many cores this process may use. Grading runs inside a cell that is
+#: itself one of `ops.driver.max_workers` concurrent cells, and the consuming
+#: loop already publishes that cell's share here (arloop `derive_thread_cap`
+#: exports nproc // max_workers over THREAD_CAP_KEYS before grading). Reading
+#: the same variable makes grading concurrency and the agent thread cap share
+#: ONE number, so P workers x max_workers cells cannot oversubscribe the box.
+_CORE_SHARE_ENV = "OMP_NUM_THREADS"
+
+#: explicit override, for a host that wants to state P directly (0/unset =
+#: derive). Bounded by MAX_GRADE_WORKERS like every other path.
+_WORKERS_ENV = "ARBENCH_ALE_GRADE_WORKERS"
+
+#: bwrap's own setup failing is NOT a submission failure, but looks like one:
+#: bwrap exits nonzero having produced no output, which `_run_case` records as
+#: `error`, indistinguishable from a broken submission (worth a measured
+#: -174,065 points on one run). Under concurrency (~1258 mounts per case,
+#: bubblewrap 0.6.3) that setup races intermittently — 0.1-0.5% of cases,
+#: 0/900 sequential occurrences — bursty and non-monotonic in P, so no safe-P
+#: setting avoids it and the case is retried instead. Anchored to bwrap's own
+#: `bwrap: ` line prefix so a submission cannot fake the signature: its
+#: stderr is a separate stream from the sandbox's own diagnostics only insofar
+#: as bwrap writes these lines before exec, which is where the race occurs.
+_BWRAP_SETUP_RACE_RE = re.compile(
+    rb"^bwrap: (Can't bind mount|Can't parse mountinfo|Unable to remount)",
+    re.MULTILINE)
+
+#: attempts per case when the mount race is detected (1 would disable retry).
+#: The race is transient; after these the case records the error as it always
+#: has, so a genuinely broken submission still fails — only slower.
+_BWRAP_RETRY_ATTEMPTS = 3
+
+#: pause before re-attempting a mount-raced case: the race is mount-table
+#: contention in the kernel, not resource exhaustion, so it is short.
+_BWRAP_RETRY_BACKOFF_S = 0.25
+
+#: stderr kept per case, for the retry signature ONLY — never scored, never
+#: reported. Bounded so a chatty solver cannot grow grader RAM per case.
+_STDERR_KEEP_BYTES = 4096
+
+
+def grade_workers(core_share: Optional[int] = None) -> int:
+    """Cases to grade concurrently — DERIVED from this process's core share.
+
+    A bare constant would be wrong: grading happens inside one of
+    `ops.driver.max_workers` concurrent cells, so P processes x max_workers
+    cells is the real box load. `_CORE_SHARE_ENV` is the share the consuming
+    loop already computed for that cell, so the two caps stay consistent by
+    construction.
+
+    ASSUMES `_CORE_SHARE_ENV` states this process's core share. When it is
+    unset nothing has claimed a share, so the whole box is assumed available
+    — the regime the A/B measured the ceiling in, and the right reading for a
+    manual one-off grade. A co-scheduled second grader with neither variable
+    set would double-count; that is the same one-arm-per-box deployment
+    assumption the thread cap makes.
+    """
+    override = os.environ.get(_WORKERS_ENV, "").strip()
+    if override:
+        try:
+            n = int(override)
+        except ValueError:
+            n = 0
+        if n > 0:
+            return min(MAX_GRADE_WORKERS, n)
+    if core_share is None:
+        raw = os.environ.get(_CORE_SHARE_ENV, "").strip()
+        try:
+            core_share = int(raw) if raw else (os.cpu_count() or 1)
+        except ValueError:
+            core_share = os.cpu_count() or 1
+    return max(1, min(MAX_GRADE_WORKERS, core_share // CORES_PER_SOLVER))
 
 _CONTRACT = """
 ---
@@ -169,30 +257,42 @@ def _sandbox_prefix(private_root: Optional[Path] = None) -> list[str]:
 
 
 def _run_case(submission: Path, case_file: Path, out_path: Path,
-              timeout_s: float, sandbox: bool) -> str:
+              timeout_s: float, sandbox: bool) -> tuple[str, bytes]:
     """One case: solver stdout streams to out_path ON DISK (never grader
     RAM — a runaway printer was an OOM, cubic P1) with a byte cap enforced
-    after. Returns ok|tle|error|too_long."""
+    after. Returns (ok|tle|error|too_long, stderr tail).
+
+    cwd is the case's OWN tempdir: solvers grade concurrently, and a solver
+    writing a fixed-name scratch file beside itself would otherwise collide
+    with every other case (measured: 21/24 cases corrupted at P=8 under
+    `sandbox: none`; the sandbox's read-only root masks it, it does not fix
+    it).
+
+    stderr is captured for ONE purpose — telling a bwrap setup failure apart
+    from a solver crash (`_BWRAP_SETUP_RACE_RE`). It is never scored and never
+    leaves the grader, and the tail is byte-capped."""
     cmd = (_sandbox_prefix() if sandbox else []) + [sys.executable,
                                                     str(submission)]
     with open(case_file, "rb") as stdin, open(out_path, "wb") as stdout:
         proc = subprocess.Popen(cmd, stdin=stdin, stdout=stdout,
-                                stderr=subprocess.DEVNULL,
-                                start_new_session=True)
+                                stderr=subprocess.PIPE,
+                                start_new_session=True,
+                                cwd=str(out_path.parent))
         try:
-            proc.wait(timeout=timeout_s)
+            _, err = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 proc.kill()
-            proc.wait()
-            return "tle"
+            proc.communicate()
+            return "tle", b""
+    err = (err or b"")[-_STDERR_KEEP_BYTES:]
     if proc.returncode != 0:
-        return "error"
+        return "error", err
     if out_path.stat().st_size > MAX_OUTPUT_BYTES:
-        return "too_long"
-    return "ok"
+        return "too_long", err
+    return "ok", err
 
 
 #: per-case outcomes recorded in Score.details["cases"]. "rejected" covers
@@ -227,14 +327,21 @@ def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
 
 
 def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
-                            timeout_s: float, sandbox: bool
-                            ) -> tuple[str, Optional[int]]:
+                            timeout_s: float, sandbox: bool,
+                            cwd: Optional[str] = None
+                            ) -> tuple[str, Optional[int], bytes]:
     """Reactive case: the official `tester` reads the case on ITS stdin,
     spawns the solver, mediates the dialogue over pipes, and prints
     'Score = N' to ITS stderr — no separate scorer, no output file. Returns
-    the score, or None if the interaction failed (invalid move, TLE, tester
-    rejected, or no score). The whole tester+solver tree runs in the sandbox
-    as one process group.
+    (status, score, stderr tail); score is None if the interaction failed
+    (invalid move, TLE, tester rejected, or no score). The whole tester+solver
+    tree runs in the sandbox as one process group.
+
+    CONCURRENCY-SAFE: each case's tmpfs mask of the private root lives in that
+    bwrap process's OWN mount namespace, so concurrent cases share no
+    writable state; the score arrives on a private pipe, not a file. `cwd` is
+    the case's own tempdir so a tester writing scratch beside itself cannot
+    collide either (measured bit-identical at P=1..16).
 
     SECURITY (cubic P0, both verified exploitable then fixed): a reactive
     solver shares the tester's stderr fd and its filesystem/proc view, so it
@@ -254,7 +361,8 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
     cmd = (_sandbox_prefix(private_root) if sandbox else []) + inner
     with open(case_file, "rb") as stdin:
         proc = subprocess.Popen(cmd, stdin=stdin, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, start_new_session=True)
+                                stderr=subprocess.PIPE, start_new_session=True,
+                                cwd=cwd)
         try:
             # communicate() is the timeout-safe reader (a raw read() would
             # ignore the timeout and hang on a deadlocked solver). After the
@@ -269,15 +377,60 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
             except (ProcessLookupError, PermissionError):
                 proc.kill()
             proc.communicate()
-            return "tle", None
+            return "tle", None, b""
+    tail = (err or b"")[-_STDERR_KEEP_BYTES:]
     if proc.returncode != 0:
         # the tester exits nonzero on a rejected interaction (invalid move,
         # solver crash) — don't trust a score line from a failed run
-        return "rejected", None
+        return "rejected", None, tail
     matches = _SCORE_RE.findall(err[:MAX_OUTPUT_BYTES].decode(errors="replace"))
     if matches:
-        return "ok", int(matches[-1])
-    return "rejected", None    # successful exit but no score line
+        return "ok", int(matches[-1]), tail
+    return "rejected", None, tail   # successful exit but no score line
+
+
+def _grade_one_case(index: int, case_file: Path, submission: Path,
+                    scorer: Path, time_limit: float, sandboxed: bool,
+                    reactive: bool) -> tuple[int, str, Optional[int], int]:
+    """Grade ONE case end to end, independently of every other case.
+
+    Returns (index, outcome, score, bwrap_retries). `index` is carried so the
+    caller can restore case_files order regardless of completion order — the
+    per-case rows are consumed positionally by official relative scoring.
+
+    Outcome normalisation (too_long -> rejected, scoreless -> rejected) is
+    done HERE so the aggregation loop only counts, and sequential and
+    concurrent grading cannot drift apart on the classification.
+
+    A case whose FAILURE is bwrap's own mount setup racing (not the
+    submission) is retried: recording it as `error` would mark a good
+    submission broken. Only that narrow signature retries, and a retry is
+    counted so it is visible rather than silent."""
+    retries = 0
+    for attempt in range(_BWRAP_RETRY_ATTEMPTS):
+        score: Optional[int] = None
+        with tempfile.TemporaryDirectory(prefix="ale-grade-") as td:
+            if reactive:
+                outcome, score, err = _run_and_score_reactive(
+                    scorer, submission, case_file, time_limit, sandboxed,
+                    cwd=td)
+            else:
+                out_path = Path(td) / "case.out"
+                outcome, err = _run_case(submission, case_file, out_path,
+                                         time_limit, sandboxed)
+                if outcome == "ok":
+                    score = _score_case(scorer, case_file, out_path)
+        raced = (outcome == "error" and sandboxed
+                 and _BWRAP_SETUP_RACE_RE.search(err) is not None)
+        if not raced or attempt == _BWRAP_RETRY_ATTEMPTS - 1:
+            break
+        retries += 1
+        time.sleep(_BWRAP_RETRY_BACKOFF_S)
+    if outcome == "too_long":
+        outcome = "rejected"             # runaway printer: rejected case
+    elif outcome not in ("tle", "error") and score is None:
+        outcome = "rejected"             # invalid answer / no score line
+    return index, outcome, score, retries
 
 
 class ALEBench(Benchmark):
@@ -285,7 +438,13 @@ class ALEBench(Benchmark):
 
     def __init__(self, data_dir: str | None = None,
                  private_data_dir: str | None = None,
-                 sandbox: bool | None = None):
+                 sandbox: bool | None = None,
+                 workers: int | None = None):
+        # None = derive from this process's core share (grade_workers); an
+        # explicit value is still bounded by MAX_GRADE_WORKERS, above which
+        # deadline-annealing solvers measurably degrade.
+        self.workers = (None if workers is None
+                        else max(1, min(MAX_GRADE_WORKERS, workers)))
         root = data_dir or os.environ.get("ALE_DATA_DIR", "")
         self.data_dir = Path(root) if root else None
         priv = private_data_dir or os.environ.get("ALE_PRIVATE_DATA_DIR", "")
@@ -434,7 +593,28 @@ class ALEBench(Benchmark):
         # loud in details, never a silent degrade
         sandboxed = self.sandbox and bool(_sandbox_prefix())
 
-        total, n_tle, n_error, n_rejected = 0, 0, 0, 0
+        # Cases are independent (own tempdir, own cwd, own sandbox mount
+        # namespace), so they grade CONCURRENTLY — 5.81x median on the pilot
+        # grid. The worker count is the one thing that is not free: solvers
+        # that anneal against a wall-clock deadline lose score when the box is
+        # oversubscribed, which is what bounds `grade_workers()`.
+        workers = self.workers if self.workers is not None else grade_workers()
+        work = [(i, cf) for i, cf in enumerate(case_files)]
+
+        def run(item: tuple[int, Path]):
+            return _grade_one_case(item[0], item[1], sub, scorer, time_limit,
+                                   sandboxed, reactive)
+
+        if workers == 1:
+            results = [run(w) for w in work]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(run, work))
+        # completion order is arbitrary; the rows are consumed POSITIONALLY by
+        # official relative scoring, so restore case_files order
+        results.sort(key=lambda r: r[0])
+
+        total, n_tle, n_error, n_rejected, n_bwrap_retries = 0, 0, 0, 0, 0
         # Per-case rows, in case_files order. The SUM alone is not enough to
         # reconstruct the official ALE-Bench metric: the relative contests
         # re-normalise per case, and there a REJECTED case is not a zero-cost
@@ -442,41 +622,17 @@ class ALEBench(Benchmark):
         # after the fact means re-running agent code over the private cases,
         # so it is recorded once, here, where it is already known.
         cases: list[dict[str, Any]] = []
-        for case_file in case_files:
-            if reactive:
-                # the tester runs+scores in one call; TLE vs rejected
-                # (invalid move / no score) are distinguished for the audit
-                outcome, case_score = _run_and_score_reactive(
-                    scorer, sub, case_file, time_limit, sandboxed)
-                if outcome == "tle":
-                    n_tle += 1
-                elif case_score is None:
-                    outcome = "rejected"
-                    n_rejected += 1
-                else:
-                    total += case_score
-                cases.append(_case_row(case_file, outcome, case_score))
-                continue
-            case_score = None
-            with tempfile.TemporaryDirectory(prefix="ale-grade-") as td:
-                out_path = Path(td) / "case.out"
-                outcome = _run_case(sub, case_file, out_path, time_limit,
-                                    sandboxed)
-                if outcome == "ok":
-                    case_score = _score_case(scorer, case_file, out_path)
+        for index, outcome, case_score, retries in results:
+            n_bwrap_retries += retries
             if outcome == "tle":
                 n_tle += 1
             elif outcome == "error":
                 n_error += 1
-            elif outcome == "too_long":
-                outcome = "rejected"         # runaway printer: rejected case
-                n_rejected += 1
-            elif case_score is None:
-                outcome = "rejected"         # invalid answer: scores 0
+            elif outcome == "rejected":
                 n_rejected += 1
             else:
                 total += case_score
-            cases.append(_case_row(case_file, outcome, case_score))
+            cases.append(_case_row(case_files[index], outcome, case_score))
         details = {"n_cases": len(case_files), "n_tle": n_tle,
                    "n_error": n_error, "n_rejected": n_rejected,
                    "seed_regime": meta.get("seed_regime"),
@@ -484,6 +640,11 @@ class ALEBench(Benchmark):
                    "python_time_scale": PYTHON_TIME_SCALE,
                    "sandboxed": sandboxed,
                    "sandbox_requested": self.sandbox,
+                   "grade_workers": workers,
+                   # bwrap's mount setup racing under concurrency, retried:
+                   # nonzero means the sandbox misfired, never that the
+                   # submission did
+                   "n_bwrap_retries": n_bwrap_retries,
                    "problem_type": meta.get("problem_type", "batch"),
                    "score_type": meta.get("score_type")}
         n_failed = n_tle + n_error + n_rejected
