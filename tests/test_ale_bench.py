@@ -532,3 +532,254 @@ def test_reactive_grading_records_per_case_rows(tmp_path):
     assert len(score.details["cases"]) == 3
     assert all(c["status"] in ("ok", "tle", "error", "rejected")
                for c in score.details["cases"])
+
+
+# ------------------------------------------------------- concurrent grading
+# Cases grade concurrently. What must hold: the SCORE is unchanged, the rows
+# stay in case order whatever order they finish in, and a bwrap setup race
+# (the sandbox misfiring, not the submission) does not become a failed case.
+# Measured evidence for the ceiling is in the MAX_GRADE_WORKERS comment.
+
+def test_grading_workers_derive_from_the_core_share(monkeypatch):
+    """P is derived from this process's core share, not hardcoded: grading
+    runs inside one of `max_workers` concurrent cells, and the loop publishes
+    that cell's share in the same variable it caps agent threads with."""
+    from arbench.benchmarks.ale_bench.benchmark import (
+        CORES_PER_SOLVER, MAX_GRADE_WORKERS, grade_workers,
+    )
+    monkeypatch.delenv("ARBENCH_ALE_GRADE_WORKERS", raising=False)
+    monkeypatch.setenv("OMP_NUM_THREADS", "4")
+    assert grade_workers() == 4 // CORES_PER_SOLVER
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    assert grade_workers() == 1                 # a 1-core share never forks
+    monkeypatch.setenv("OMP_NUM_THREADS", "256")
+    assert grade_workers() == MAX_GRADE_WORKERS  # the measured ceiling holds
+    monkeypatch.setenv("OMP_NUM_THREADS", "not-a-number")
+    assert grade_workers() >= 1                  # junk must not raise
+    # an explicit share argument bypasses the environment entirely
+    assert grade_workers(core_share=2) == 1
+
+
+def test_grading_workers_env_override_is_bounded(monkeypatch):
+    from arbench.benchmarks.ale_bench.benchmark import (
+        MAX_GRADE_WORKERS, grade_workers,
+    )
+    monkeypatch.setenv("OMP_NUM_THREADS", "2")
+    monkeypatch.setenv("ARBENCH_ALE_GRADE_WORKERS", "6")
+    assert grade_workers() == 6                  # overrides the derivation
+    monkeypatch.setenv("ARBENCH_ALE_GRADE_WORKERS", "64")
+    assert grade_workers() == MAX_GRADE_WORKERS  # never above the ceiling
+    monkeypatch.setenv("ARBENCH_ALE_GRADE_WORKERS", "junk")
+    assert grade_workers() == 1                  # falls back to the share
+
+
+def test_workers_argument_is_clamped_to_the_measured_ceiling(tmp_path):
+    from arbench.benchmarks.ale_bench.benchmark import MAX_GRADE_WORKERS
+    _stage(tmp_path)
+    assert _bench(tmp_path, workers=4).workers == 4
+    assert _bench(tmp_path, workers=99).workers == MAX_GRADE_WORKERS
+    assert _bench(tmp_path, workers=0).workers == 1
+    assert _bench(tmp_path).workers is None      # None = derive per grade
+
+
+def test_parallel_and_sequential_grades_are_identical(tmp_path):
+    """A deterministic submission must score the same at P=1 and P=8, with
+    identical per-case rows — the whole safety claim in one assertion."""
+    _stage(tmp_path, n_private=12)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    seq = _bench(tmp_path, workers=1).grade(task, sub)
+    par = _bench(tmp_path, workers=8).grade(task, sub)
+    assert seq.valid and par.valid
+    assert seq.value == par.value
+    assert seq.details["cases"] == par.details["cases"]
+    assert par.details["grade_workers"] == 8
+    assert seq.details["grade_workers"] == 1
+
+
+def test_case_rows_stay_in_case_order_when_completion_order_differs(tmp_path):
+    """Earlier cases sleep LONGER, so they finish last. The rows must still
+    be in case_files order: official relative scoring consumes them
+    positionally, so a completion-ordered list silently mis-scores."""
+    _stage(tmp_path, n_private=8, time_limit=10.0)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    # case values are 10..17; smaller value = longer sleep = later finish
+    sub.write_text("import time\n"
+                   "n = int(input())\n"
+                   "time.sleep((18 - n) * 0.05)\n"
+                   "print(n)\n")
+    score = _bench(tmp_path, workers=8).grade(task, sub)
+    assert score.valid
+    assert [c["case"] for c in score.details["cases"]] == [
+        f"case_{i:04d}.txt" for i in range(8)]
+    assert [c["score"] for c in score.details["cases"]] == [
+        (i + 10) * 2 for i in range(8)]          # vis stub doubles
+
+
+def test_counters_agree_with_the_rows_under_concurrency(tmp_path):
+    """Mixed outcomes graded concurrently: the aggregate counters are
+    recomputed from the collected rows, so they cannot drift apart."""
+    _stage(tmp_path, n_private=8, time_limit=0.4)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import time\n"
+                   "n = int(input())\n"
+                   "if n == 11: raise SystemExit(3)\n"        # error
+                   "if n == 12: time.sleep(30)\n"             # tle
+                   "print('BAD' if n == 13 else n)\n")        # rejected
+    score = _bench(tmp_path, workers=8).grade(task, sub)
+    d = score.details
+    assert d["n_error"] == sum(1 for c in d["cases"] if c["status"] == "error")
+    assert d["n_tle"] == sum(1 for c in d["cases"] if c["status"] == "tle")
+    assert d["n_rejected"] == sum(1 for c in d["cases"]
+                                 if c["status"] == "rejected")
+    assert d["n_error"] == d["n_tle"] == d["n_rejected"] == 1
+    assert score.value == sum(c["score"] for c in d["cases"]
+                              if c["score"] is not None)
+
+
+def test_concurrent_solvers_do_not_share_a_cwd(tmp_path):
+    """Each case runs in its OWN cwd. A solver writing a fixed-name scratch
+    file beside itself would otherwise be clobbered by every other case
+    (measured: 21/24 corrupted at P=8 with no sandbox)."""
+    _stage(tmp_path, n_private=8, time_limit=10.0)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    # write my own value to a FIXED name, pause, read it back: a shared cwd
+    # returns some other case's value and the vis stub scores the wrong case
+    sub.write_text("import time\n"
+                   "n = int(input())\n"
+                   "open('scratch.txt', 'w').write(str(n))\n"
+                   "time.sleep(0.3)\n"
+                   "print(open('scratch.txt').read().strip())\n")
+    score = _bench(tmp_path, workers=8).grade(task, sub)
+    assert score.valid
+    assert [c["score"] for c in score.details["cases"]] == [
+        (i + 10) * 2 for i in range(8)]
+
+
+def test_a_bwrap_setup_race_is_retried_not_recorded_as_a_failure(tmp_path,
+                                                                monkeypatch):
+    """bwrap's mount setup racing under concurrency exits nonzero with no
+    output — which reads exactly like a crashed submission and cost one
+    measured run -174,065 points. The narrow signature is retried; the
+    retry is counted so it is visible."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+
+    fails = {"left": 1}          # fail the FIRST attempt of each case only
+    real = B._run_case
+
+    def flaky(submission, case_file, out_path, timeout_s, sandbox):
+        if fails["left"] > 0:
+            fails["left"] -= 1
+            return "error", (b"bwrap: Can't bind mount /oldroot/ on /newroot/: "
+                             b"Unable to remount recursively with correct "
+                             b"flags: No such file or directory\n")
+        return real(submission, case_file, out_path, timeout_s, sandbox)
+
+    monkeypatch.setattr(B, "_run_case", flaky)
+    # the signature is only consulted when a sandbox is actually in use; a
+    # harmless prefix stands in for bwrap so the test needs no bwrap binary
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: ["env"])
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 66.0       # nothing lost to the race
+    assert score.details["n_error"] == 0
+    assert score.details["n_bwrap_retries"] == 1
+
+
+def test_a_genuine_submission_error_is_never_retried_away(tmp_path,
+                                                          monkeypatch):
+    """The retry must not mask a broken submission. A solver that crashes
+    while echoing bwrap's words on stderr still fails: the signature is
+    anchored to bwrap's own line PREFIX, so mid-line text never matches."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text(
+        "import sys\n"
+        "n = int(input())\n"
+        "if n == 11:\n"
+        "    sys.stderr.write("
+        "'sandbox said bwrap: Unable to remount recursively' + chr(10))\n"
+        "    raise SystemExit(3)\n"
+        "print(n)\n")
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: ["env"])
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=4)
+    score = bench.grade(task, sub)
+    assert score.valid and score.value == 44.0       # 20 + 24; case 11 errors
+    assert score.details["sandboxed"] is True
+    assert score.details["n_error"] == 1
+    assert score.details["n_bwrap_retries"] == 0
+
+    # the signature itself: bwrap's own line, and only at a line start
+    assert B._BWRAP_SETUP_RACE_RE.search(
+        b"bwrap: Can't bind mount /oldroot/ on /newroot/")
+    assert not B._BWRAP_SETUP_RACE_RE.search(
+        b"my solver logged bwrap: Can't bind mount")
+    assert not B._BWRAP_SETUP_RACE_RE.search(b"Traceback: KeyError")
+
+
+def test_an_unretryable_race_still_records_the_error(tmp_path, monkeypatch):
+    """Retries are BOUNDED: a case that races every attempt records the error
+    exactly as it does today rather than retrying forever."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip())\n")
+    monkeypatch.setattr(B, "_run_case", lambda *a, **k: (
+        "error", b"bwrap: Unable to remount recursively\n"))
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: ["env"])
+    monkeypatch.setattr(B, "_BWRAP_RETRY_BACKOFF_S", 0.0)
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    score = bench.grade(task, sub)
+    # an invalid aggregate reports its counters inside the reason string
+    assert not score.valid and "no case produced" in score.details["reason"]
+    assert "'n_error': 3" in score.details["reason"]
+    assert f"'n_bwrap_retries': {3 * (B._BWRAP_RETRY_ATTEMPTS - 1)}" \
+        in score.details["reason"]
+    assert [c["status"] for c in score.details["cases"]] == ["error"] * 3
+
+
+def test_reactive_grading_is_identical_under_concurrency(tmp_path):
+    """Reactive cases carry no shared state — the private-root tmpfs lives in
+    each case's own bwrap mount namespace and the score arrives on a private
+    pipe — so they grade concurrently too."""
+    _stage(tmp_path, problem_type="reactive", n_private=8, time_limit=10.0)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(input().strip(), flush=True)\n")
+    seq = _bench(tmp_path, workers=1).grade(task, sub)
+    par = _bench(tmp_path, workers=8).grade(task, sub)
+    assert seq.valid and par.valid and seq.value == par.value
+    assert seq.details["cases"] == par.details["cases"]
+
+
+def test_minimize_invalid_path_survives_concurrency(tmp_path):
+    """The invalid-return paths are unchanged by concurrency: a minimize task
+    with any failed case still refuses to report a flattering total, and still
+    carries its per-case rows."""
+    _stage(tmp_path, score_type="minimize", n_private=8)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("n = int(input())\n"
+                   "print('BAD' if n == 13 else n)\n")
+    score = _bench(tmp_path, workers=8).grade(task, sub)
+    assert not score.valid and "minimize" in score.details["reason"]
+    assert score.is_higher_better is False
+    assert [c["status"] for c in score.details["cases"]] == [
+        "ok", "ok", "ok", "rejected", "ok", "ok", "ok", "ok"]
