@@ -1,9 +1,9 @@
 """Grading firewall tests.
 
 The held-out answers must resolve OUTSIDE the agent-visible data dir (openml:
-<task>/private/answers.csv, a sibling of prepared/; mlebench: a separate private
-data root), the Task handed to adapters must never name the answers, and grading
-must still work from the relocated paths.
+<task>/private/answers.csv, a sibling of prepared/), the Task handed to adapters
+must never name the answers, and grading must still work from the relocated
+paths.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ pd = pytest.importorskip("pandas")
 pytest.importorskip("sklearn")
 
 from arbench.benchmarks.openml_tabular.benchmark import OpenMLTabular
-from arbench.benchmarks.mlebench_lite.benchmark import MLEBenchLite
 
 # Any real task id from tasks.BY_ID (load_task rejects unknown ids); the data
 # itself is a tiny fake staged into tmp_path.
@@ -176,32 +175,6 @@ def test_openml_refuses_legacy_leaky_layout(tmp_path):
         bench.load_task(TASK)
 
 
-def test_mlebench_private_root_resolution(tmp_path, monkeypatch):
-    """Private-root resolution: env var > `<data_dir>-private` sibling > NONE
-    (legacy single-root removed — answers must never live in the public tree).
-    No mlebench install needed — resolution is pure path logic."""
-    monkeypatch.delenv("MLEBENCH_PRIVATE_DATA_DIR", raising=False)
-    pub = tmp_path / "mlebench-data"
-    pub.mkdir()
-
-    bare = MLEBenchLite(data_dir=str(pub))         # no sibling, no env
-    assert bare.private_data_dir is None           # legacy single-root REMOVED
-    assert not bare._firewalled()
-
-    sibling = tmp_path / "mlebench-data-private"   # sibling appears: autodetect
-    sibling.mkdir()
-    fw = MLEBenchLite(data_dir=str(pub))
-    assert fw.private_data_dir == sibling
-    assert fw._firewalled()
-
-    other = tmp_path / "elsewhere"                 # env var wins over sibling
-    other.mkdir()
-    monkeypatch.setenv("MLEBENCH_PRIVATE_DATA_DIR", str(other))
-    env_fw = MLEBenchLite(data_dir=str(pub))
-    assert env_fw.private_data_dir == other
-    assert env_fw._firewalled()
-
-
 def test_openml_rejects_negative_probabilities(tmp_path):
     """A row like [-0.5, 1.5] sums to 1 but is not a distribution — reject,
     don't renormalise (cubic review, PR #8)."""
@@ -265,23 +238,6 @@ def test_validate_submission_default_strips_score(tmp_path):
     # embed private detail (e.g. the answers path in an IOError); cubic P2
     assert reason == Benchmark.GENERIC_INVALID
     assert "answers" not in reason and "/" not in reason
-
-
-def test_mlebench_refuses_to_run_without_a_private_root(tmp_path, monkeypatch):
-    """The legacy single-root fallback is gone: answers in the agent-bindable
-    tree would silently void the firewall."""
-    monkeypatch.delenv("MLEBENCH_PRIVATE_DATA_DIR", raising=False)
-    bench = MLEBenchLite(data_dir=str(tmp_path / "nothing-private-here"))
-    assert bench.private_data_dir is None
-    with pytest.raises(RuntimeError, match="private data root"):
-        bench.load_task("random-acts-of-pizza")
-    # pointing the private root AT the public root is the same leak (cubic)
-    pub = tmp_path / "pub"
-    pub.mkdir()
-    monkeypatch.setenv("MLEBENCH_PRIVATE_DATA_DIR", str(pub))
-    same = MLEBenchLite(data_dir=str(pub))
-    with pytest.raises(RuntimeError, match="SEPARATE private data root"):
-        same.load_task("random-acts-of-pizza")
 
 
 def test_openml_infinite_predictions_rejected_by_validate_and_grade(tmp_path):

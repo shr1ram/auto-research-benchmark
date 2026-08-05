@@ -27,8 +27,8 @@ arbench/
 │                         #   load, checked on every load, restamped in
 │                         #   Score.details at grade (audit hook)
 ├── benchmarks/
-│   ├── mlebench_lite/     # wraps openai/mle-bench (vendor/mle-bench extra)
-│   └── openml_tabular/    # 11 curated tabular tasks (prepare + grade built in)
+│   ├── ale_bench/         # 40 competitive-programming tasks (self-contained grader)
+│   └── openml_tabular/    # 101 curated tabular tasks (prepare + grade built in)
 └── cli.py             # arbench tasks | arbench grade — the two hand-tools
 ```
 
@@ -52,8 +52,8 @@ container-bindable):
 
 ```
 data/
-├── mlebench/{public,private}/     # $MLEBENCH_DATA_DIR -> public
-└── openml/{public,private}/       # $OPENML_DATA_DIR   -> public
+├── ale/{public,private}/          # $ALE_DATA_DIR    -> public
+└── openml/{public,private}/       # $OPENML_DATA_DIR -> public
                                    # private: <task>/answers.csv, never bound
 ```
 
@@ -64,7 +64,7 @@ it. Task objects never name the private paths.
 
 ```bash
 uv sync --extra dev                                    # the library (tiny deps)
-uv sync --extra mlebench                               # + vendor/mle-bench, run box only
+uv sync --extra ale-prep                               # + hf_hub for ALE problem zips
 
 arbench tasks --benchmark openml_tabular
 arbench grade --benchmark openml_tabular --task wine_quality submission.csv
@@ -78,20 +78,18 @@ task = bench.load_task("wine_quality")            # public view only
 score = bench.grade(task, submission_path)        # Score(value, valid, ...)
 ```
 
-### Prerequisites for the MLE-Bench Lite benchmark
+### Preparing the benchmarks
 
-`mlebench_lite` wraps `openai/mle-bench`'s **low-complexity split** (22
-Kaggle competitions; we reuse its own registry + `grade_csv`, list tasks
-smallest-first, and never need its docker harness). On the run box you need:
+`ale_bench` serves Sakana's ALE-Bench problems with a self-contained grader (no
+Docker judge on any pipeline path). Fetch the problem data with
+`uv sync --extra ale-prep && python scripts/prepare_ale_bench.py`; the dataset
+is Xet-backed, so `hf_hub_download` does the download.
 
-1. `uv sync --extra mlebench`  (editable dep on `vendor/mle-bench`)
-2. Kaggle API creds at `~/.kaggle/kaggle.json`, **and** to accept each
-   competition's rules on kaggle.com.
-3. Prepared data: `mlebench prepare -c <competition>` (point its cache at the
-   project filesystem, not NFS home).
+`openml_tabular` prepares itself over the public OpenML REST endpoints — no
+extra and no credentials: `python -m arbench.benchmarks.openml_tabular.prepare`.
 
-The library imports and tests cleanly **without** mlebench installed — it's
-only needed to actually prepare/grade those tasks.
+The library imports and tests cleanly with only `--extra dev`; a plugin's own
+dependencies are needed only to actually prepare/grade its tasks.
 
 ## Tests
 

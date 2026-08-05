@@ -83,7 +83,6 @@ def test_render_goal_no_data_dir_is_noop():
 # ── live-tree sweeps (box only; skip without prepared data) ──────────────────
 
 _OPENML = os.environ.get("OPENML_DATA_DIR", "")
-_MLEBENCH = os.environ.get("MLEBENCH_DATA_DIR", "")
 
 
 @pytest.mark.skipif(not _OPENML, reason="OPENML_DATA_DIR not set (live data check)")
@@ -102,11 +101,3 @@ def test_live_openml_served_tasks_are_clean():
         t = b.load_task(tid)
         assert "private" not in Path(t.data_dir).parts
         assert not list(Path(t.data_dir).rglob("answers.csv"))
-
-
-@pytest.mark.skipif(not _MLEBENCH, reason="MLEBENCH_DATA_DIR not set (live data check)")
-def test_live_mlebench_public_root_has_no_private_dirs():
-    root = Path(_MLEBENCH)
-    assert root.exists()
-    leaks = [p for p in root.rglob("private") if p.is_dir()]
-    assert not leaks, f"private dirs inside the public mlebench tree: {leaks[:3]}"

@@ -1,8 +1,8 @@
 """The Task: the unit of work an autoresearch system is asked to solve.
 
-A Task is deliberately benchmark-agnostic. MLE-Bench produces Tasks; so could
-SWE-bench, a custom Kaggle-style problem, or a toy regression. The consuming
-system only ever sees this — never the benchmark internals.
+A Task is deliberately benchmark-agnostic. ALE-Bench and OpenML produce Tasks;
+so could SWE-bench, a custom Kaggle-style problem, or a toy regression. The
+consuming system only ever sees this — never the benchmark internals.
 """
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ class Task:
     # Stable identifier, unique within a benchmark (e.g. the competition id).
     task_id: str
 
-    # Which benchmark minted this task (e.g. "mlebench_lite"). Used by the runner
+    # Which benchmark minted this task (e.g. "ale_bench"). Used by the runner
     # to route grading back to the right Benchmark.
     benchmark: str
 
-    # Natural-language statement handed to the autoresearch system. For MLE-bench
-    # this is the competition description + the data dictionary.
+    # Natural-language statement handed to the autoresearch system. For
+    # openml_tabular this is the dataset prose + the submission contract.
     # CONTRACT: this must be the COMPLETE, self-contained task statement —
     # consumers (agent prompts AND memory writers, via arloop's task_presented
     # trace event) use it VERBATIM and may never parse its internal structure.

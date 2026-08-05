@@ -4,11 +4,11 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
-from arbench.benchmarks.mlebench_lite.tasks import LITE_COMPETITIONS
 from arbench.benchmarks.openml_tabular.tasks import BY_ID
 from arbench.cli import main
 from arbench.core.splits import (
-    ROLES, assign_roles, families, load_split_meta, split_of, tasks_with_role,
+    BENCHMARKS, ROLES, assign_roles, families, load_split_meta, split_of,
+    tasks_with_role,
 )
 
 FR = {"bank": 0.5, "val": 0.2, "test": 0.3}
@@ -16,28 +16,27 @@ FR = {"bank": 0.5, "val": 0.2, "test": 0.3}
 
 def test_every_task_is_listed_with_a_family():
     assert set(load_split_meta("openml_tabular")) == set(BY_ID)
-    assert set(load_split_meta("mlebench_lite")) == set(LITE_COMPETITIONS)
+    assert load_split_meta("ale_bench")           # every ale task carries facts
 
 
 def test_families_exclude_the_excluded_with_reasons():
     fams = families()
     flat = {t for members in fams.values() for t in members}
-    meta = load_split_meta("mlebench_lite")
-    for task_id, entry in meta.items():
-        if entry.get("excluded"):
-            assert ("mlebench_lite", task_id) not in flat
-            assert entry["excluded"]              # reason is mandatory
-        else:
-            assert ("mlebench_lite", task_id) in flat
+    for benchmark in BENCHMARKS:
+        for task_id, entry in load_split_meta(benchmark).items():
+            if entry.get("excluded"):
+                assert (benchmark, task_id) not in flat
+                assert entry["excluded"]          # reason is mandatory
+            else:
+                assert (benchmark, task_id) in flat
 
 
 def test_families_are_yaml_defined_not_hardcoded():
     """Add/remove families by editing the yaml — the code derives everything."""
     fams = families()
-    assert set(fams) == {"tabular", "text", "vision", "other", "code"}
-    benchmarks_in_tabular = {b for b, _ in fams["tabular"]}
-    assert benchmarks_in_tabular == {"openml_tabular", "mlebench_lite"}
-    assert fams["other"] == [("mlebench_lite", "mlsp-2013-birds")]
+    assert set(fams) == {"tabular", "code"}
+    assert {b for b, _ in fams["tabular"]} == {"openml_tabular"}
+    assert {b for b, _ in fams["code"]} == {"ale_bench"}
 
 
 def test_assignment_is_deterministic_and_complete():
@@ -73,8 +72,9 @@ def test_tasks_with_role_filters():
     test_openml = tasks_with_role("test", FR, 0, benchmark="openml_tabular")
     assert test_openml
     assert set(test_openml) <= set(BY_ID)
-    vision_bank = tasks_with_role("bank", FR, 0, family="vision")
-    assert all(t in LITE_COMPETITIONS for t in vision_bank)
+    code_bank = tasks_with_role("bank", FR, 0, family="code")
+    assert code_bank
+    assert set(code_bank) <= set(load_split_meta("ale_bench"))
 
 
 def test_split_of_returns_facts():
@@ -86,8 +86,7 @@ def test_split_of_returns_facts():
 def test_cli_families_and_assignment():
     bare = CliRunner().invoke(main, ["splits"])
     assert bare.exit_code == 0
-    assert "tabular (" in bare.output
-    assert "excluded: the-icml-2013-whale-challenge-right-whale-redux" in bare.output
+    assert "tabular (" in bare.output and "code (" in bare.output
     drawn = CliRunner().invoke(
         main, ["splits", "--fractions", "bank=0.5,val=0.2,test=0.3"])
     assert drawn.exit_code == 0

@@ -10,10 +10,6 @@ dist/
 # benchmark data: re-downloadable input, lives on the project FS
 data/
 
-# vendored checkouts are gitignored; the pin lives in vendor/README.md
-vendor/*
-!vendor/README.md
-
 # generated on first load beside the data
 .data_version
 

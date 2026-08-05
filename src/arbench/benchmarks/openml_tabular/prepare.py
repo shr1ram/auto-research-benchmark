@@ -1,4 +1,4 @@
-"""Stage OpenML tabular tasks to the project FS, mirroring mlebench_lite's layout.
+"""Stage OpenML tabular tasks to the project FS.
 
 For each task spec, download the OpenML dataset (by data_id, via the public REST/
 minio parquet endpoint — no `openml` pip dep), then write a fixed, seeded split:
