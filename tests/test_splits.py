@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
+from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS
 from arbench.benchmarks.openml_tabular.tasks import BY_ID
 from arbench.cli import main
 from arbench.core.splits import (
@@ -13,10 +14,23 @@ from arbench.core.splits import (
 
 FR = {"bank": 0.5, "val": 0.2, "test": 0.3}
 
+#: each plugin's canonical task list — the set its splits.yaml must cover
+#: exactly. Onboarding a benchmark means adding it here; the completeness test
+#: fails on any roster member missing from this map, so a new plugin cannot
+#: quietly skip the check.
+CANONICAL_TASKS = {
+    "openml_tabular": set(BY_ID),
+    "ale_bench": set(ALL_PROBLEMS),
+}
+
 
 def test_every_task_is_listed_with_a_family():
-    assert set(load_split_meta("openml_tabular")) == set(BY_ID)
-    assert load_split_meta("ale_bench")           # every ale task carries facts
+    """splits.yaml must cover each benchmark's canonical task set EXACTLY — a
+    task present in the task table but missing from the yaml would be silently
+    dropped from families()/assign_roles(), so equality, not truthiness."""
+    assert set(CANONICAL_TASKS) == set(BENCHMARKS)
+    for benchmark, canonical in CANONICAL_TASKS.items():
+        assert set(load_split_meta(benchmark)) == canonical, benchmark
 
 
 def test_families_exclude_the_excluded_with_reasons():
