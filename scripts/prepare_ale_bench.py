@@ -45,6 +45,9 @@ TOOL_BINARIES = ("gen", "vis", "tester")
 # binary has no libc dependency at all and runs on both. This changes only the
 # LINK TARGET — the Rust source is upstream's own, from the <pid>.zip.
 BUILD_TARGET = "x86_64-unknown-linux-musl"
+# objdump's exact diagnostic for "parsed fine, no dynamic table" —
+# the only nonzero exit this check accepts (see _assert_static).
+_NOT_DYNAMIC = "not a dynamic object"
 
 
 def _fetch_zip(pid: str, zips_dir: Path) -> Path:
@@ -71,22 +74,26 @@ def _assert_static(binary: Path) -> None:
     The guarantee we need is "runs on a host with an older libc", and the
     observable form of that is: no dynamic GLIBC imports.
 
-    FAIL CLOSED. "objdump printed no GLIBC lines" is only evidence of a
-    static binary if objdump actually inspected the file — an unreadable
-    path, a truncated build or a missing binutils all produce empty output
-    too, and treating those as "clean" would stage exactly the unrunnable
-    tool this check exists to catch. So the pass condition is POSITIVE proof
-    that the file was parsed: the object header ("file format ...") in
-    stdout.
+    FAIL CLOSED, against a CLOSED SET of known-good outcomes. "objdump did
+    something unexpected" must never be read as "the binary is fine" — that
+    is the silent-failure shape this whole check exists to eliminate, so
+    only two shapes pass and everything else raises:
 
-    The header, NOT the exit code, is what proves the parse. objdump -T
-    exits 1 on a fully static non-PIE binary ("not a dynamic object") while
-    still printing that header — it read the file and correctly reported
-    there is no dynamic table, which is the strongest pass this check can
-    get. Static-PIE binaries keep a PT_DYNAMIC segment and exit 0. Both are
-    glibc-independent and both must pass, so keying on rc would falsely
-    refuse the non-PIE build. A missing header means objdump genuinely
-    failed, and we refuse.
+      rc == 0                        objdump listed the dynamic table
+                                     normally (our static-PIE musl build
+                                     lands here, with an empty table);
+      rc == 1 + NOT_DYNAMIC on       objdump parsed the file and found no
+      stderr                         dynamic table at all — a fully static
+                                     NON-PIE build. Genuinely static, so it
+                                     satisfies the guarantee.
+
+    Both pass paths additionally require the object header, which is what
+    proves a parse happened. Everything else is refused: any other exit
+    code, rc == 1 with a different diagnostic (truncated file, permission
+    denied, "file format not recognized", a directory), a missing header,
+    or no objdump at all. Those all produce zero GLIBC lines too, and
+    treating that emptiness as "clean" would stage an unrunnable tool that
+    fails much later, on another host, as a silent zero score.
     """
     if shutil.which("objdump") is None:
         raise SystemExit(
@@ -95,12 +102,14 @@ def _assert_static(binary: Path) -> None:
             "on hosts with an older glibc.")
     proc = subprocess.run(["objdump", "-T", str(binary)],
                           capture_output=True, text=True)
-    if "file format" not in proc.stdout:
+    parsed = "file format" in proc.stdout
+    no_dynamic_table = proc.returncode == 1 and _NOT_DYNAMIC in proc.stderr
+    if not parsed or not (proc.returncode == 0 or no_dynamic_table):
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
         raise RuntimeError(
             f"{binary.name}: could not verify static linkage — objdump exited "
-            f"{proc.returncode} without parsing the file "
-            f"({(proc.stderr or proc.stdout).strip().splitlines()[:1]}). "
-            f"Refusing to stage a tool whose linkage is unknown.")
+            f"{proc.returncode} ({detail[:1]}). Refusing to stage a tool whose "
+            f"linkage is unknown.")
     glibc = sorted({tok.strip("()") for line in proc.stdout.splitlines()
                     if "GLIBC_" in line
                     for tok in line.split() if "GLIBC_" in tok})
