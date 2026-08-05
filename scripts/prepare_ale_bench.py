@@ -11,7 +11,8 @@ Needs only: network (HuggingFace zip download) + cargo (a user-level
   1. download <pid>.zip from HF SakanaAI/ALE-Bench into the PRIVATE root
      (`_zips/`) — data.json inside carries the PRIVATE seed lists, so the
      zip itself is grader-only material;
-  2. `cargo build --release` the official tools (gen / vis / tester);
+  2. `cargo build --release --target x86_64-unknown-linux-musl` the official
+     tools (gen / vis / tester) — see _build_tools for why static musl;
   3. `gen` the public cases -> PUBLIC tree, private cases -> PRIVATE tree;
   4. stage statement + meta publicly, tool binaries + private seeds
      privately; stamp .data_version (a re-run is a deliberate re-pin).
@@ -36,6 +37,15 @@ from arbench.core.data_version import verify_data_version
 HF_REPO = "SakanaAI/ALE-Bench"
 TOOL_BINARIES = ("gen", "vis", "tester")
 
+# The staged binaries must run on every machine that grades or self-evaluates a
+# task, and those machines do not share a libc. The build box (lab, glibc 2.34)
+# is newer than the cluster that consumes the tasks (Myriad, RHEL 7.9, glibc
+# 2.17), so a default dynamic build dies at exec with
+# "/lib64/libc.so.6: version `GLIBC_2.18' not found". A statically linked musl
+# binary has no libc dependency at all and runs on both. This changes only the
+# LINK TARGET — the Rust source is upstream's own, from the <pid>.zip.
+BUILD_TARGET = "x86_64-unknown-linux-musl"
+
 
 def _fetch_zip(pid: str, zips_dir: Path) -> Path:
     """Fetch <pid>.zip via huggingface_hub. The dataset is Xet-backed, so the
@@ -55,16 +65,49 @@ def _fetch_zip(pid: str, zips_dir: Path) -> Path:
     return dest
 
 
+def _assert_static(binary: Path) -> None:
+    """Refuse a binary that still carries GLIBC symbols.
+
+    The guarantee we need is "runs on a host with an older libc", and the
+    observable form of that is: no dynamic GLIBC imports. objdump -T on a
+    static musl binary lists no such symbols. If objdump is unavailable the
+    check cannot be made, and staging a silently-dynamic binary is exactly
+    the failure this exists to prevent.
+    """
+    if shutil.which("objdump") is None:
+        raise SystemExit(
+            f"objdump not found — cannot verify {binary.name} is statically "
+            "linked. Install binutils, or the staged tools may be unrunnable "
+            "on hosts with an older glibc.")
+    out = subprocess.run(["objdump", "-T", str(binary)],
+                         capture_output=True, text=True).stdout
+    glibc = sorted({tok for line in out.splitlines() if "GLIBC_" in line
+                    for tok in line.split() if tok.startswith("(GLIBC_")
+                    or tok.startswith("GLIBC_")})
+    if glibc:
+        raise RuntimeError(
+            f"{binary.name}: dynamically linked against glibc "
+            f"({', '.join(glibc[:4])}) — expected a static {BUILD_TARGET} "
+            f"build. The staged tool would fail to exec on a host with an "
+            f"older libc.")
+
+
 def _build_tools(tools_dir: Path) -> Path:
-    """cargo build --release; returns the target bin dir."""
+    """cargo build --release for BUILD_TARGET; returns the target bin dir."""
     if shutil.which("cargo") is None:
         raise SystemExit(
             "cargo not found — install a user-level Rust toolchain first:\n"
             "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | "
             "sh -s -- -y   (no root needed)")
-    subprocess.run(["cargo", "build", "--release", "--quiet"],
-                   cwd=tools_dir, check=True)
-    return tools_dir / "target" / "release"
+    # rustup ships the musl std as a downloadable target; adding it needs no
+    # root. Tolerate failure here (a non-rustup cargo may already target musl)
+    # and let the build itself be the real error.
+    if shutil.which("rustup") is not None:
+        subprocess.run(["rustup", "target", "add", BUILD_TARGET],
+                       capture_output=True, check=False)
+    subprocess.run(["cargo", "build", "--release", "--quiet",
+                    "--target", BUILD_TARGET], cwd=tools_dir, check=True)
+    return tools_dir / "target" / BUILD_TARGET / "release"
 
 
 def _gen_cases(gen_binary: Path, seeds: list[int], workdir: Path) -> list[Path]:
@@ -131,6 +174,7 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
         for name in TOOL_BINARIES:
             built = bin_dir / name
             if built.is_file():
+                _assert_static(built)
                 shutil.copy2(built, priv / "bin" / name)
         (priv / "seeds.json").write_text(json.dumps(
             {"regime": regime, "private_seeds": private_seeds}))
