@@ -69,27 +69,51 @@ def _assert_static(binary: Path) -> None:
     """Refuse a binary that still carries GLIBC symbols.
 
     The guarantee we need is "runs on a host with an older libc", and the
-    observable form of that is: no dynamic GLIBC imports. objdump -T on a
-    static musl binary lists no such symbols. If objdump is unavailable the
-    check cannot be made, and staging a silently-dynamic binary is exactly
-    the failure this exists to prevent.
+    observable form of that is: no dynamic GLIBC imports.
+
+    FAIL CLOSED. "objdump printed no GLIBC lines" is only evidence of a
+    static binary if objdump actually inspected the file — an unreadable
+    path, a truncated build or a missing binutils all produce empty output
+    too, and treating those as "clean" would stage exactly the unrunnable
+    tool this check exists to catch. So we require POSITIVE proof that the
+    file was parsed: objdump must succeed AND report an object header. A
+    static binary with no dynamic table still prints that header (it exits 0
+    and simply lists no symbols), so this does not false-refuse the very
+    binaries we are trying to ship.
     """
     if shutil.which("objdump") is None:
         raise SystemExit(
             f"objdump not found — cannot verify {binary.name} is statically "
             "linked. Install binutils, or the staged tools may be unrunnable "
             "on hosts with an older glibc.")
-    out = subprocess.run(["objdump", "-T", str(binary)],
-                         capture_output=True, text=True).stdout
-    glibc = sorted({tok for line in out.splitlines() if "GLIBC_" in line
-                    for tok in line.split() if tok.startswith("(GLIBC_")
-                    or tok.startswith("GLIBC_")})
+    proc = subprocess.run(["objdump", "-T", str(binary)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0 or "file format" not in proc.stdout:
+        raise RuntimeError(
+            f"{binary.name}: could not verify static linkage — objdump exited "
+            f"{proc.returncode} without parsing the file "
+            f"({(proc.stderr or proc.stdout).strip().splitlines()[:1]}). "
+            f"Refusing to stage a tool whose linkage is unknown.")
+    glibc = sorted({tok.strip("()") for line in proc.stdout.splitlines()
+                    if "GLIBC_" in line
+                    for tok in line.split() if "GLIBC_" in tok})
     if glibc:
         raise RuntimeError(
             f"{binary.name}: dynamically linked against glibc "
             f"({', '.join(glibc[:4])}) — expected a static {BUILD_TARGET} "
             f"build. The staged tool would fail to exec on a host with an "
             f"older libc.")
+
+
+def _ensure_build_target() -> None:
+    """Install the musl std once per run — it is a global toolchain setting,
+    not per-problem state, and `--all` would otherwise re-add it 40 times.
+    Tolerates failure: a non-rustup cargo may already target musl, and the
+    build itself is the authoritative error.
+    """
+    if shutil.which("rustup") is not None:
+        subprocess.run(["rustup", "target", "add", BUILD_TARGET],
+                       capture_output=True, check=False)
 
 
 def _build_tools(tools_dir: Path) -> Path:
@@ -99,12 +123,6 @@ def _build_tools(tools_dir: Path) -> Path:
             "cargo not found — install a user-level Rust toolchain first:\n"
             "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | "
             "sh -s -- -y   (no root needed)")
-    # rustup ships the musl std as a downloadable target; adding it needs no
-    # root. Tolerate failure here (a non-rustup cargo may already target musl)
-    # and let the build itself be the real error.
-    if shutil.which("rustup") is not None:
-        subprocess.run(["rustup", "target", "add", BUILD_TARGET],
-                       capture_output=True, check=False)
     subprocess.run(["cargo", "build", "--release", "--quiet",
                     "--target", BUILD_TARGET], cwd=tools_dir, check=True)
     return tools_dir / "target" / BUILD_TARGET / "release"
@@ -228,6 +246,7 @@ def main(argv: list[str]) -> None:
     public_root = Path(os.environ.get("ALE_DATA_DIR", "data/ale/public"))
     private_root = Path(os.environ.get("ALE_PRIVATE_DATA_DIR",
                                        str(public_root.parent / "private")))
+    _ensure_build_target()
     for pid in ids:
         prepare_one(pid, public_root, private_root, full_seeds)
 

@@ -35,14 +35,28 @@ def test_zip_slip_member_is_refused(tmp_path, monkeypatch):
 # --- the staged tools must be static: they are built on a newer-glibc lab box
 # and consumed on an older-glibc cluster (see _build_tools). ------------------
 
+def _stub_subprocess(monkeypatch, stdout="", returncode=0, calls=None):
+    """Pretend every external tool exists and record what we shell out to."""
+    monkeypatch.setattr(prepare.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(cmd, **kwargs):
+        if calls is not None:
+            calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode, stdout, "boom")
+
+    monkeypatch.setattr(prepare.subprocess, "run", fake_run)
+
+
+# objdump prints this header for any file it successfully parses, including a
+# static binary with no dynamic symbols at all.
+_HEADER = "t:     file format elf64-x86-64\n\n"
+
+
 def test_build_targets_musl_and_returns_that_bin_dir(tmp_path, monkeypatch):
-    """The build must pass --target musl and read back the musl bin dir --
+    """The build must pass --target musl and read back the musl bin dir —
     a plain --release build lands in target/release and links glibc."""
     calls = []
-    monkeypatch.setattr(prepare.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(prepare.subprocess, "run",
-                        lambda cmd, **kw: calls.append(cmd) or
-                        subprocess.CompletedProcess(cmd, 0, "", ""))
+    _stub_subprocess(monkeypatch, calls=calls)
     bin_dir = prepare._build_tools(tmp_path)
 
     build = next(c for c in calls if c[:2] == ["cargo", "build"])
@@ -51,28 +65,19 @@ def test_build_targets_musl_and_returns_that_bin_dir(tmp_path, monkeypatch):
     assert bin_dir == tmp_path / "target" / "x86_64-unknown-linux-musl" / "release"
 
 
-def test_build_installs_the_musl_target_first(tmp_path, monkeypatch):
+def test_musl_target_is_installed_once_per_run_not_per_problem(monkeypatch):
+    """`--all` builds 40 problems; the target is global toolchain state."""
     calls = []
-    monkeypatch.setattr(prepare.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(prepare.subprocess, "run",
-                        lambda cmd, **kw: calls.append(cmd) or
-                        subprocess.CompletedProcess(cmd, 0, "", ""))
-    prepare._build_tools(tmp_path)
-    assert ["rustup", "target", "add", "x86_64-unknown-linux-musl"] in calls
-
-
-def _objdump_stub(monkeypatch, output):
-    monkeypatch.setattr(prepare.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(
-        prepare.subprocess, "run",
-        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, output, ""))
+    _stub_subprocess(monkeypatch, calls=calls)
+    prepare._ensure_build_target()
+    assert calls == [["rustup", "target", "add", "x86_64-unknown-linux-musl"]]
 
 
 def test_glibc_linked_binary_is_refused(tmp_path, monkeypatch):
     """A dynamic build execs fine on the build box and dies on the cluster,
     so the failure must surface here, at stage time."""
-    _objdump_stub(monkeypatch, (
-        "DYNAMIC SYMBOL TABLE:\n"
+    _stub_subprocess(monkeypatch, stdout=(
+        _HEADER +
         "0000 DF *UND* 0000 (GLIBC_2.18) pthread_getname_np\n"
         "0000 DF *UND* 0000 (GLIBC_2.2.5) memcpy\n"))
     with pytest.raises(RuntimeError, match="dynamically linked against glibc"):
@@ -80,8 +85,24 @@ def test_glibc_linked_binary_is_refused(tmp_path, monkeypatch):
 
 
 def test_static_musl_binary_is_accepted(tmp_path, monkeypatch):
-    _objdump_stub(monkeypatch, "objdump: /x: not a dynamic object\n")
+    """A static binary parses cleanly and lists no dynamic symbols."""
+    _stub_subprocess(monkeypatch, stdout=_HEADER)
     prepare._assert_static(tmp_path / "tester")     # must not raise
+
+
+def test_failed_objdump_is_refused_not_read_as_clean(tmp_path, monkeypatch):
+    """FAIL CLOSED: objdump erroring produces no GLIBC lines, which must not
+    be mistaken for proof of a static binary."""
+    _stub_subprocess(monkeypatch, stdout="", returncode=1)
+    with pytest.raises(RuntimeError, match="could not verify static linkage"):
+        prepare._assert_static(tmp_path / "tester")
+
+
+def test_unparsable_output_is_refused_even_on_success(tmp_path, monkeypatch):
+    """Exit 0 with no object header means objdump never parsed the file."""
+    _stub_subprocess(monkeypatch, stdout="something unexpected\n")
+    with pytest.raises(RuntimeError, match="could not verify static linkage"):
+        prepare._assert_static(tmp_path / "tester")
 
 
 def test_missing_objdump_is_an_error_not_a_silent_pass(tmp_path, monkeypatch):
