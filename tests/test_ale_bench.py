@@ -15,6 +15,7 @@ import pytest
 
 from arbench.benchmarks.ale_bench.benchmark import (
     MAX_SUBMISSION_BYTES, PYTHON_TIME_SCALE, ALEBench,
+    ReactiveTesterUnavailable, SandboxUnavailable, assert_tester_executes,
 )
 from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS, LITE_PROBLEMS
 
@@ -783,3 +784,182 @@ def test_minimize_invalid_path_survives_concurrency(tmp_path):
     assert score.is_higher_better is False
     assert [c["status"] for c in score.details["cases"]] == [
         "ok", "ok", "ok", "rejected", "ok", "ok", "ok", "ok"]
+
+
+# ------------------------------------------- fail-loud: unrunnable tester
+#
+# E2 post-mortem: on a host whose glibc could not satisfy the prebuilt Rust
+# testers, the tester never ran. The failure surfaced only inside AGENT code,
+# which caught it and reported `mean = 0.0`; the harness recorded 2,499 of
+# 3,600 attempts as SUCCESSFUL zeros. The harness cannot stop an agent writing
+# `except: pass`, so it refuses to hand out the task at all.
+
+
+def _break_tester(pub, message, returncode=1):
+    """Replace the staged public tester with one that reproduces a loader
+    failure: the message on STDERR and a nonzero exit, which is what ld.so
+    itself does when it cannot resolve a binary."""
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import sys
+sys.stderr.write({message!r} + chr(10))
+sys.exit({returncode})
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+
+
+def test_reactive_task_with_unloadable_tester_is_refused(tmp_path):
+    """THE E2 DEFECT. A tester the loader rejects must kill the task at
+    load_task, before any attempt runs — not reach the agent as a catchable
+    error that becomes a plausible 0.0."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, "/data/bin/tester: /lib64/libc.so.6: version "
+                       "`GLIBC_2.34' not found (required by /data/bin/tester)")
+    with pytest.raises(ReactiveTesterUnavailable) as e:
+        _bench(tmp_path).load_task(TASK)
+    # the operator gets the real cause, not a downstream symptom
+    assert "GLIBC_2.34" in str(e.value)
+
+
+@pytest.mark.parametrize("message", [
+    "tester: error while loading shared libraries: libgcc_s.so.1: cannot "
+    "open shared object file",
+    "tester: symbol lookup error: undefined symbol: __libc_start_main",
+])
+def test_other_loader_failures_are_refused_too(tmp_path, message):
+    """The glibc-version string is one of several ways ld.so reports that a
+    prebuilt binary cannot run; all of them mean the same thing here."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, message)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
+
+
+def test_non_executable_tester_is_refused(tmp_path):
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.chmod(0o644)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
+
+
+def test_working_tester_loads_normally(tmp_path):
+    """The unchanged path: a tester that RUNS yields a task exactly as
+    before. This is the regression guard on the probe — it must not reject
+    working binaries."""
+    _stage(tmp_path, problem_type="reactive")
+    task = _bench(tmp_path).load_task(TASK)
+    assert task.metadata["problem_type"] == "reactive"
+    assert "Maximise goodness" in task.goal
+
+
+def test_probe_accepts_a_tester_that_exits_nonzero_on_bare_exec(tmp_path):
+    """A usage message + nonzero exit means the binary LOADED and reached its
+    own argument parser. That is a working tester (the real ALE testers print
+    usage), and the probe must not confuse it with a loader failure."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import sys
+sys.stderr.write("Usage: tester <command> [<args>...]" + chr(10))
+sys.exit(2)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    assert_tester_executes(t)                    # does not raise
+    assert _bench(tmp_path).load_task(TASK).metadata["problem_type"] == \
+        "reactive"
+
+
+def test_probe_does_not_flag_a_running_testers_own_errno_text(tmp_path):
+    """A tester that runs and complains about a missing FILE says 'No such
+    file or directory' — an errno string, not an ld.so diagnostic. Flagging it
+    would refuse working tasks, so the probe keys on loader phrases only."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, "tester: cannot open case.txt: No such file or "
+                       "directory")
+    assert_tester_executes(pub / "bin" / "tester")        # does not raise
+
+
+def test_batch_tasks_do_not_probe_a_tester(tmp_path):
+    """Batch problems never exec a binary for self-scoring (pure Python
+    scoring rule), so their public bin/ is empty and the probe must not
+    apply."""
+    _stage(tmp_path, problem_type="batch")
+    task = _bench(tmp_path).load_task(TASK)
+    assert task.metadata["problem_type"] == "batch"
+
+
+def test_reactive_contract_forbids_swallowing_the_tester_failure(tmp_path):
+    """The contract text now tells the agent that a failed tester call is
+    fatal. This is defence in depth behind the preflight (an agent may still
+    disobey), and it is asserted here because it is prompt text: changing it
+    changes the config hash."""
+    _stage(tmp_path, problem_type="reactive")
+    goal = _bench(tmp_path).load_task(TASK).goal
+    assert "MANDATORY" in goal and "FATAL" in goal
+    assert "bare `except`" in goal
+    # the batch contract is deliberately untouched (its hash must not fork)
+    _stage(tmp_path / "b", problem_type="batch")
+    batch_goal = ALEBench(data_dir=str(tmp_path / "b" / "public"),
+                          private_data_dir=str(tmp_path / "b" / "private"),
+                          sandbox=False).load_task(TASK).goal
+    assert "MANDATORY" not in batch_goal
+
+
+# --------------------------------- fail-loud: requested sandbox is absent
+
+
+def test_requested_sandbox_without_bwrap_raises(tmp_path, monkeypatch):
+    """An explicitly requested sandbox that cannot be built must RAISE.
+    Previously _sandbox_prefix() returned [] and grading ran UNCONFINED with
+    no exception, leaving only descriptive metadata an operator had to think
+    to diff."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    task = _bench(tmp_path).load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    # a host with no bwrap
+    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    with pytest.raises(SandboxUnavailable) as e:
+        bench.grade(task, sub)
+    assert "bwrap" in str(e.value)
+
+
+def test_sandbox_autodetect_on_a_bwrapless_host_still_grades(tmp_path,
+                                                             monkeypatch):
+    """UNCHANGED DEFAULT. A caller that never asked for a sandbox (sandbox
+    defaults to auto-detect) must keep grading unconfined on a bwrap-less
+    host, exactly as before — the raise is scoped to an explicit request."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"), workers=1)
+    assert bench.sandbox is False
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    score = bench.grade(task, sub)
+    assert score.valid
+    assert score.details["sandboxed"] is False
+
+
+def test_requested_sandbox_that_is_available_grades_sandboxed(tmp_path,
+                                                              monkeypatch):
+    """The other unchanged path: when bwrap IS available, an explicit request
+    is honoured and grading reports itself sandboxed."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: ["env"])
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.details["sandboxed"] is True
