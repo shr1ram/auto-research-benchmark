@@ -78,6 +78,23 @@ from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS
 #: AtCoder's submission size limit is 512 KiB; enforce the same
 MAX_SUBMISSION_BYTES = 512 * 1024
 
+
+class SandboxUnavailable(RuntimeError):
+    """An explicitly requested grading sandbox cannot be provided on this
+    host. Never downgrade silently: an operator who asked for confinement
+    must learn it is absent BEFORE a grid starts, not from metadata they
+    would have had to diff afterwards."""
+
+
+class ReactiveTesterUnavailable(RuntimeError):
+    """A reactive task's public `tester` cannot execute on this host.
+
+    Reactive is the one contract that REQUIRES the agent to exec a shipped
+    binary to score itself, so a tester that will not load turns an
+    environment failure into agent-visible output the agent may catch and
+    report as a number. Probing once, up front, is what keeps that from
+    being mistaken for a measurement."""
+
 #: grading time limit = official time_limit × this (Python does less work per
 #: second than the C++ the contests assume; their judge scales per-language
 #: too). One constant, identical across arms — internal-consistency knob,
@@ -86,6 +103,19 @@ PYTHON_TIME_SCALE = 3.0
 
 #: the official vis binary prints exactly this (stdout on batch problems)
 _SCORE_RE = re.compile(r"Score\s*=\s*(-?\d+)")
+
+#: ld.so's own diagnostics when a prebuilt binary cannot be loaded: a missing
+#: symbol VERSION (the measured E2 case, GLIBC_2.34 on a 2.17 host), an absent
+#: shared object, or an unresolved symbol. The loader emits these BEFORE the
+#: program's first instruction and then exits nonzero, so a match proves the
+#: tester never ran. Each alternative is a fixed ld.so phrase, not a generic
+#: errno string — a tester that RUNS and prints "No such file or directory"
+#: about its own arguments is a working tester and must not be flagged.
+_LOADER_FAILURE_RE = re.compile(
+    r"(version `[A-Z_]+_[\d.]+' not found"
+    r"|error while loading shared libraries"
+    r"|undefined symbol:"
+    r"|cannot execute binary file)")
 
 #: cap on a solver's stdout per case — AHC answers are KBs; a runaway
 #: printer must become a rejected case, not grader OOM / a full disk
@@ -222,6 +252,12 @@ _CONTRACT_REACTIVE = """
   number (negate the mean if the problem minimises).
 - The hidden test set uses the same generator; your reported score is your
   own estimate of your solver's true quality.
+- Running the tester is MANDATORY and its failure is FATAL. If a tester
+  invocation fails to run, times out, or prints no "Score = N", do NOT catch
+  the error, substitute a default, or fall back to a placeholder score — let
+  your script DIE with the error. A score you did not measure is worse than
+  no score at all, because it is indistinguishable from a real one. Never
+  wrap the tester call in a bare `except`.
 - Your script MUST END by writing result.json containing a NUMERIC "score".
   A run that exits 0 without a numeric score in result.json is INVALID and
   scores nothing, however good the solver was: make sure the scoring block is
@@ -254,6 +290,99 @@ def _sandbox_prefix(private_root: Optional[Path] = None) -> list[str]:
         if tester.is_file():
             cmd += ["--ro-bind", str(tester), str(tester)]
     return cmd
+
+
+def assert_sandbox_works() -> None:
+    """Fail-closed probe that a grading sandbox can actually be BUILT here.
+
+    Presence is not capability: managed clusters ship the bwrap binary with
+    unprivileged user namespaces disabled (measured: Myriad login nodes have
+    max_user_namespaces=0, compute nodes 10000), where every confined case
+    would fail one at a time instead of the request failing once, loudly.
+    Same shape as arloop's `assert_bwrap_works()` — present AND able to
+    unshare."""
+    prefix = _sandbox_prefix()
+    if not prefix:
+        raise SandboxUnavailable(
+            "grading sandbox requested (sandbox=True) but bwrap is not "
+            "available on this host — install bubblewrap, or pass "
+            "sandbox=False to grade agent code unconfined")
+    try:
+        probe = subprocess.run(prefix + ["/bin/true"], capture_output=True,
+                               timeout=60)
+    except OSError as e:
+        raise SandboxUnavailable(
+            f"grading sandbox requested but bwrap cannot be executed: "
+            f"{e.__class__.__name__}: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise SandboxUnavailable(
+            "grading sandbox requested but the bwrap probe hung for 60s") \
+            from e
+    if probe.returncode != 0:
+        raise SandboxUnavailable(
+            f"grading sandbox requested but bwrap cannot create namespaces "
+            f"on this host (rc={probe.returncode}: "
+            f"{probe.stderr.decode(errors='replace').strip()}) — unprivileged "
+            f"user namespaces are often disabled on login nodes; pass "
+            f"sandbox=False to grade agent code unconfined")
+
+
+def assert_tester_executes(tester: Path) -> None:
+    """Fail-closed probe that a reactive task's public tester actually RUNS
+    on this host, run once per task before any attempt.
+
+    The binary is prebuilt at prepare time, so a grid can be dispatched to a
+    host whose loader cannot satisfy it (measured: E2 on Myriad, glibc 2.17
+    against the testers' GLIBC_2.34). That failure surfaces only inside agent
+    code, which is free to catch it — and did, converting a dead environment
+    into `mean = 0.0` on 2,499 of 3,600 attempts that the harness then
+    recorded as SUCCESSFUL. Biased data is worse than missing data, so the
+    task refuses to load instead.
+
+    Bare `tester` with no arguments prints a usage line and exits (measured
+    rc=0 on the shipped binaries, but either way its own argument parser was
+    reached, which proves the loader resolved every symbol). Only a binary
+    that cannot load at all is fatal — this probe deliberately does NOT
+    require a particular exit code or message from a tester that runs.
+    Death by a SIGNAL is the exception: no usage-exit is ever a signal, so
+    that is treated as fatal whatever the stderr says."""
+    if not tester.is_file():
+        raise ReactiveTesterUnavailable(f"reactive tester missing at {tester}")
+    if not os.access(tester, os.X_OK):
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} is not executable")
+    try:
+        probe = subprocess.run([str(tester)], capture_output=True, timeout=60)
+    except OSError as e:
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} cannot be executed on this host: "
+            f"{e.__class__.__name__}: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} hung for 60s on a bare exec") from e
+    # Death by SIGNAL is unconditionally fatal: a binary that reached its own
+    # argument parser exits normally, so a signal means it never got there.
+    # This catches the modes that carry no ld.so text at all — SIGILL from a
+    # binary built for another microarchitecture (target-cpu=native, AVX-512
+    # on a host without it), SIGSEGV/SIGABRT in startup — which would
+    # otherwise reproduce this PR's own defect through a different door.
+    if probe.returncode < 0:
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} was killed by signal "
+            f"{-probe.returncode} on a bare exec — it cannot start on this "
+            f"host, so it would never run for the agent either")
+    # A loader failure never reaches the program either: ld.so writes to
+    # stderr and exits NONZERO without running main. Bare `tester` with no
+    # arguments is itself allowed to exit nonzero (usage), so for a plain
+    # nonzero exit the ld.so text is what distinguishes the two.
+    if probe.returncode == 0:
+        return
+    err = (probe.stderr or b"").decode(errors="replace")
+    if _LOADER_FAILURE_RE.search(err):
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} cannot load on this host — the "
+            f"dynamic loader rejected it, so it would never run for the "
+            f"agent either:\n{err.strip()[:_STDERR_KEEP_BYTES]}")
 
 
 def _run_case(submission: Path, case_file: Path, out_path: Path,
@@ -457,6 +586,14 @@ class ALEBench(Benchmark):
         # None = auto (bwrap if present); tests pass False for portability
         self.sandbox = shutil.which("bwrap") is not None if sandbox is None \
             else sandbox
+        # An EXPLICIT request is a promise this object cannot keep silently.
+        # Verified HERE, at construction, because grade() must never raise
+        # (Benchmark ABC) and because an operator who asked for confinement
+        # must find out before a grid starts, not per-case mid-run. Auto-
+        # detect never reaches this: it only turns the sandbox ON when bwrap
+        # is already present, and a bwrap-less host resolves to False.
+        if sandbox is True:
+            assert_sandbox_works()
 
     # ------------------------------------------------------------- tasks
 
@@ -496,6 +633,12 @@ class ALEBench(Benchmark):
                 f"task {task_id!r} is reactive but its public tester is not "
                 f"staged at {prep / 'bin' / 'tester'} — re-run "
                 f"scripts/prepare_ale_bench.py {task_id}")
+        if reactive:
+            # staged is not the same as runnable: the binary is prebuilt and
+            # the grid may run on a different host. Probe once, here, so an
+            # unloadable tester kills the cell with its real cause instead of
+            # reaching agent code that can catch it and report a number.
+            assert_tester_executes(prep / "bin" / "tester")
         score_type = meta["score_type"]                 # minimize | maximize
         time_note = (f"time limit {meta['time_limit_s']}s per case"
                      if meta.get("time_limit_s") else "per-case time limit in "
@@ -589,9 +732,11 @@ class ALEBench(Benchmark):
             return Score.invalid(f"private-tree drift: {e}",
                                  is_higher_better=hb)
         time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
-        # resolved ONCE: requesting a sandbox on a bwrap-less host must be
-        # loud in details, never a silent degrade
-        sandboxed = self.sandbox and bool(_sandbox_prefix())
+        # Resolved ONCE, and already proven usable: an explicitly requested
+        # sandbox is verified in __init__, so by here `self.sandbox` is the
+        # truth rather than a hope. grade() must never raise (Benchmark ABC),
+        # which is exactly why the check cannot live here.
+        sandboxed = self.sandbox
 
         # Cases are independent (own tempdir, own cwd, own sandbox mount
         # namespace), so they grade CONCURRENTLY — 5.81x median on the pilot

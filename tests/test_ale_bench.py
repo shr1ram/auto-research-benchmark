@@ -15,6 +15,8 @@ import pytest
 
 from arbench.benchmarks.ale_bench.benchmark import (
     MAX_SUBMISSION_BYTES, PYTHON_TIME_SCALE, ALEBench,
+    ReactiveTesterUnavailable, SandboxUnavailable, assert_sandbox_works,
+    assert_tester_executes,
 )
 from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS, LITE_PROBLEMS
 
@@ -783,3 +785,276 @@ def test_minimize_invalid_path_survives_concurrency(tmp_path):
     assert score.is_higher_better is False
     assert [c["status"] for c in score.details["cases"]] == [
         "ok", "ok", "ok", "rejected", "ok", "ok", "ok", "ok"]
+
+
+# ------------------------------------------- fail-loud: unrunnable tester
+#
+# E2 post-mortem: on a host whose glibc could not satisfy the prebuilt Rust
+# testers, the tester never ran. The failure surfaced only inside AGENT code,
+# which caught it and reported `mean = 0.0`; the harness recorded 2,499 of
+# 3,600 attempts as SUCCESSFUL zeros. The harness cannot stop an agent writing
+# `except: pass`, so it refuses to hand out the task at all.
+
+
+def _break_tester(pub, message, returncode=1):
+    """Replace the staged public tester with one that reproduces a loader
+    failure: the message on STDERR and a nonzero exit, which is what ld.so
+    itself does when it cannot resolve a binary."""
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import sys
+sys.stderr.write({message!r} + chr(10))
+sys.exit({returncode})
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+
+
+def test_reactive_task_with_unloadable_tester_is_refused(tmp_path):
+    """THE E2 DEFECT. A tester the loader rejects must kill the task at
+    load_task, before any attempt runs — not reach the agent as a catchable
+    error that becomes a plausible 0.0."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, "/data/bin/tester: /lib64/libc.so.6: version "
+                       "`GLIBC_2.34' not found (required by /data/bin/tester)")
+    with pytest.raises(ReactiveTesterUnavailable) as e:
+        _bench(tmp_path).load_task(TASK)
+    # the operator gets the real cause, not a downstream symptom
+    assert "GLIBC_2.34" in str(e.value)
+
+
+@pytest.mark.parametrize("message", [
+    "tester: error while loading shared libraries: libgcc_s.so.1: cannot "
+    "open shared object file",
+    "tester: symbol lookup error: undefined symbol: __libc_start_main",
+])
+def test_other_loader_failures_are_refused_too(tmp_path, message):
+    """The glibc-version string is one of several ways ld.so reports that a
+    prebuilt binary cannot run; all of them mean the same thing here."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, message)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
+
+
+def test_non_executable_tester_is_refused(tmp_path):
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.chmod(0o644)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
+
+
+def test_working_tester_loads_normally(tmp_path):
+    """The unchanged path: a tester that RUNS yields a task exactly as
+    before. This is the regression guard on the probe — it must not reject
+    working binaries."""
+    _stage(tmp_path, problem_type="reactive")
+    task = _bench(tmp_path).load_task(TASK)
+    assert task.metadata["problem_type"] == "reactive"
+    assert "Maximise goodness" in task.goal
+
+
+def test_probe_accepts_a_tester_that_exits_nonzero_on_bare_exec(tmp_path):
+    """A usage message + nonzero exit means the binary LOADED and reached its
+    own argument parser. That is a working tester (the real ALE testers print
+    usage), and the probe must not confuse it with a loader failure."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import sys
+sys.stderr.write("Usage: tester <command> [<args>...]" + chr(10))
+sys.exit(2)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    assert_tester_executes(t)                    # does not raise
+    assert _bench(tmp_path).load_task(TASK).metadata["problem_type"] == \
+        "reactive"
+
+
+def test_probe_does_not_flag_a_running_testers_own_errno_text(tmp_path):
+    """A tester that runs and complains about a missing FILE says 'No such
+    file or directory' — an errno string, not an ld.so diagnostic. Flagging it
+    would refuse working tasks, so the probe keys on loader phrases only."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    _break_tester(pub, "tester: cannot open case.txt: No such file or "
+                       "directory")
+    assert_tester_executes(pub / "bin" / "tester")        # does not raise
+
+
+def test_batch_tasks_do_not_probe_a_tester(tmp_path):
+    """Batch problems never exec a binary for self-scoring (pure Python
+    scoring rule), so their public bin/ is empty and the probe must not
+    apply."""
+    _stage(tmp_path, problem_type="batch")
+    task = _bench(tmp_path).load_task(TASK)
+    assert task.metadata["problem_type"] == "batch"
+
+
+def test_reactive_contract_forbids_swallowing_the_tester_failure(tmp_path):
+    """The contract text now tells the agent that a failed tester call is
+    fatal. This is defence in depth behind the preflight (an agent may still
+    disobey), and it is asserted here because it is prompt text: changing it
+    changes the config hash."""
+    _stage(tmp_path, problem_type="reactive")
+    goal = _bench(tmp_path).load_task(TASK).goal
+    assert "MANDATORY" in goal and "FATAL" in goal
+    assert "bare `except`" in goal
+    # the batch contract is deliberately untouched (its hash must not fork)
+    _stage(tmp_path / "b", problem_type="batch")
+    batch_goal = ALEBench(data_dir=str(tmp_path / "b" / "public"),
+                          private_data_dir=str(tmp_path / "b" / "private"),
+                          sandbox=False).load_task(TASK).goal
+    assert "MANDATORY" not in batch_goal
+
+
+# --------------------------------- fail-loud: requested sandbox is absent
+
+
+def test_requested_sandbox_without_bwrap_raises_at_construction(tmp_path,
+                                                                monkeypatch):
+    """An explicitly requested sandbox that cannot be built must RAISE, and
+    must do so at CONSTRUCTION: grade() is contractually forbidden from
+    raising (Benchmark ABC), and an operator who asked for confinement needs
+    to know before a grid starts, not per-case mid-run."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    with pytest.raises(SandboxUnavailable) as e:
+        ALEBench(data_dir=str(tmp_path / "public"),
+                 private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert "bwrap" in str(e.value)
+
+
+def test_grade_never_raises_for_an_unavailable_sandbox(tmp_path, monkeypatch):
+    """The ABC contract itself: `grade` must return Score.invalid(...), never
+    raise. Guarding this directly because a raise here does not merely escape
+    a grid — Benchmark.validate_submission catches Exception broadly and
+    converts it into a generic FORMAT rejection, silently blaming the agent's
+    submission for a host misconfiguration."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    # construct with a WORKING sandbox so __init__'s check passes...
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c", "pass"])
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    # ...then the sandbox becomes unavailable underneath it. This is exactly
+    # the state the pre-review code raised on, so a reintroduced raise inside
+    # grade() fails this test rather than slipping through.
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [])
+    score = bench.grade(task, sub)          # must NOT raise (Benchmark ABC)
+    assert score.valid
+
+
+def test_requested_sandbox_with_broken_userns_raises(tmp_path, monkeypatch):
+    """bwrap PRESENT but unable to unshare (login nodes with
+    max_user_namespaces=0) must fail loudly up front, not once per case.
+    Presence is not capability."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B.shutil, "which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c",
+        "import sys; sys.stderr.write('bwrap: No permissions to creat"
+        "e new namespace' + chr(10)); sys.exit(1)"])
+    with pytest.raises(SandboxUnavailable) as e:
+        ALEBench(data_dir=str(tmp_path / "public"),
+                 private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert "namespace" in str(e.value)
+
+
+def test_sandbox_probe_accepts_a_working_bwrap(tmp_path, monkeypatch):
+    """The unchanged path: a bwrap that CAN build a namespace is accepted and
+    construction proceeds."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c", "pass"])
+    assert_sandbox_works()                                # does not raise
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert bench.sandbox is True
+
+
+def test_autodetect_never_probes_the_sandbox(tmp_path, monkeypatch):
+    """Auto-detect (sandbox=None) must not run the probe at all: it only ever
+    turns the sandbox ON where bwrap is already present, and paying a
+    subprocess on every construction would be a real cost on a bwrap-less
+    host that never asked."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    calls = []
+    monkeypatch.setattr(B, "assert_sandbox_works",
+                        lambda: calls.append(1))
+    ALEBench(data_dir=str(tmp_path / "public"),
+             private_data_dir=str(tmp_path / "private"))
+    ALEBench(data_dir=str(tmp_path / "public"),
+             private_data_dir=str(tmp_path / "private"), sandbox=False)
+    assert calls == []
+
+
+def test_sandbox_autodetect_on_a_bwrapless_host_still_grades(tmp_path,
+                                                             monkeypatch):
+    """UNCHANGED DEFAULT. A caller that never asked for a sandbox (sandbox
+    defaults to auto-detect) must keep grading unconfined on a bwrap-less
+    host, exactly as before — the raise is scoped to an explicit request."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"), workers=1)
+    assert bench.sandbox is False
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    score = bench.grade(task, sub)
+    assert score.valid
+    assert score.details["sandboxed"] is False
+
+
+def test_requested_sandbox_that_is_available_grades_sandboxed(tmp_path,
+                                                              monkeypatch):
+    """The other unchanged path: when bwrap IS available, an explicit request
+    is honoured and grading reports itself sandboxed."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    _stage(tmp_path)
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: ["env"])
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"),
+                     sandbox=True, workers=1)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    score = bench.grade(task, sub)
+    assert score.valid and score.details["sandboxed"] is True
+
+
+def test_tester_killed_by_a_signal_is_refused(tmp_path):
+    """A tester that dies by SIGNAL never reached its argument parser, so it
+    cannot run here — even though it prints no ld.so text. SIGILL is the real
+    case: a binary built with target-cpu=native (AVX-512) on a host that
+    lacks those instructions. Without this the fail-silently defect returns
+    through a different door."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import os, signal
+os.kill(os.getpid(), signal.SIGILL)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(ReactiveTesterUnavailable) as e:
+        _bench(tmp_path).load_task(TASK)
+    assert "signal" in str(e.value)
+
+
+def test_tester_killed_by_sigsegv_is_refused(tmp_path):
+    """Any startup abort counts, not just SIGILL."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import os, signal
+os.kill(os.getpid(), signal.SIGSEGV)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
