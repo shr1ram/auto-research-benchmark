@@ -148,3 +148,25 @@ def test_glibc_linked_binary_is_refused(tmp_path, monkeypatch):
         "0000 DF *UND* 0000 (GLIBC_2.2.5) memcpy\n"))
     with pytest.raises(RuntimeError, match="dynamically linked against glibc"):
         prepare._assert_static(tmp_path / "tester")
+
+
+def test_glibc_symbols_are_refused_on_the_tolerated_nonzero_exit_path(
+        tmp_path, monkeypatch):
+    """BOTH accept paths must feed the symbol scan.
+
+    The outer gate has two ways to pass (rc=0, and rc=1 with "not a dynamic
+    object"), so each needs its own proof that the GLIBC scan still runs
+    afterwards. Without this, a refactor could treat "not a dynamic object"
+    as a blanket pass and short-circuit the scan on that branch, and every
+    other test here would stay green while the gate silently stopped working.
+
+    DELIBERATELY SELF-CONTRADICTORY INPUT — do not delete this as unrealistic.
+    A binary with no dynamic table would not list GLIBC symbols in the real
+    world. The point is to pin the STRUCTURE (tolerating an exit code must
+    never skip the scan), not to model a plausible binary.
+    """
+    _stub_subprocess(monkeypatch, stdout=(
+        _HEADER + "0000 DF *UND* 0000 (GLIBC_2.18) pthread_getname_np\n"),
+        stderr=_NOT_DYNAMIC, returncode=1)
+    with pytest.raises(RuntimeError, match="dynamically linked against glibc"):
+        prepare._assert_static(tmp_path / "tester")
