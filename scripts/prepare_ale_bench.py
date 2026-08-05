@@ -75,11 +75,18 @@ def _assert_static(binary: Path) -> None:
     static binary if objdump actually inspected the file — an unreadable
     path, a truncated build or a missing binutils all produce empty output
     too, and treating those as "clean" would stage exactly the unrunnable
-    tool this check exists to catch. So we require POSITIVE proof that the
-    file was parsed: objdump must succeed AND report an object header. A
-    static binary with no dynamic table still prints that header (it exits 0
-    and simply lists no symbols), so this does not false-refuse the very
-    binaries we are trying to ship.
+    tool this check exists to catch. So the pass condition is POSITIVE proof
+    that the file was parsed: the object header ("file format ...") in
+    stdout.
+
+    The header, NOT the exit code, is what proves the parse. objdump -T
+    exits 1 on a fully static non-PIE binary ("not a dynamic object") while
+    still printing that header — it read the file and correctly reported
+    there is no dynamic table, which is the strongest pass this check can
+    get. Static-PIE binaries keep a PT_DYNAMIC segment and exit 0. Both are
+    glibc-independent and both must pass, so keying on rc would falsely
+    refuse the non-PIE build. A missing header means objdump genuinely
+    failed, and we refuse.
     """
     if shutil.which("objdump") is None:
         raise SystemExit(
@@ -88,7 +95,7 @@ def _assert_static(binary: Path) -> None:
             "on hosts with an older glibc.")
     proc = subprocess.run(["objdump", "-T", str(binary)],
                           capture_output=True, text=True)
-    if proc.returncode != 0 or "file format" not in proc.stdout:
+    if "file format" not in proc.stdout:
         raise RuntimeError(
             f"{binary.name}: could not verify static linkage — objdump exited "
             f"{proc.returncode} without parsing the file "

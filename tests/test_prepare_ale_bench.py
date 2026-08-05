@@ -84,15 +84,24 @@ def test_glibc_linked_binary_is_refused(tmp_path, monkeypatch):
         prepare._assert_static(tmp_path / "tester")
 
 
-def test_static_musl_binary_is_accepted(tmp_path, monkeypatch):
-    """A static binary parses cleanly and lists no dynamic symbols."""
+def test_static_pie_binary_is_accepted(tmp_path, monkeypatch):
+    """Static-PIE keeps a PT_DYNAMIC segment: objdump exits 0, lists nothing."""
     _stub_subprocess(monkeypatch, stdout=_HEADER)
+    prepare._assert_static(tmp_path / "tester")     # must not raise
+
+
+def test_static_non_pie_binary_is_accepted_despite_rc1(tmp_path, monkeypatch):
+    """A fully static NON-PIE binary has no dynamic table at all, so objdump
+    exits 1 ("not a dynamic object") after parsing the file happily. That is
+    the strongest possible evidence of glibc independence and must PASS —
+    keying the check on rc would falsely refuse it."""
+    _stub_subprocess(monkeypatch, stdout=_HEADER, returncode=1)
     prepare._assert_static(tmp_path / "tester")     # must not raise
 
 
 def test_failed_objdump_is_refused_not_read_as_clean(tmp_path, monkeypatch):
     """FAIL CLOSED: objdump erroring produces no GLIBC lines, which must not
-    be mistaken for proof of a static binary."""
+    be mistaken for proof of a static binary. No header => never parsed."""
     _stub_subprocess(monkeypatch, stdout="", returncode=1)
     with pytest.raises(RuntimeError, match="could not verify static linkage"):
         prepare._assert_static(tmp_path / "tester")
@@ -108,4 +117,14 @@ def test_unparsable_output_is_refused_even_on_success(tmp_path, monkeypatch):
 def test_missing_objdump_is_an_error_not_a_silent_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(prepare.shutil, "which", lambda name: None)
     with pytest.raises(SystemExit, match="objdump not found"):
+        prepare._assert_static(tmp_path / "tester")
+
+
+def test_glibc_symbols_are_refused_even_when_objdump_exits_nonzero(
+        tmp_path, monkeypatch):
+    """The GLIBC scan is what enforces the guarantee; it must not be skipped
+    just because the exit code was tolerated."""
+    _stub_subprocess(monkeypatch, stdout=(
+        _HEADER + "0000 DF *UND* 0000 (GLIBC_2.18) foo\n"), returncode=1)
+    with pytest.raises(RuntimeError, match="dynamically linked against glibc"):
         prepare._assert_static(tmp_path / "tester")
