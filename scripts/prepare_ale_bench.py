@@ -11,7 +11,8 @@ Needs only: network (HuggingFace zip download) + cargo (a user-level
   1. download <pid>.zip from HF SakanaAI/ALE-Bench into the PRIVATE root
      (`_zips/`) — data.json inside carries the PRIVATE seed lists, so the
      zip itself is grader-only material;
-  2. `cargo build --release` the official tools (gen / vis / tester);
+  2. `cargo build --release --target x86_64-unknown-linux-musl` the official
+     tools (gen / vis / tester) — see _build_tools for why static musl;
   3. `gen` the public cases -> PUBLIC tree, private cases -> PRIVATE tree;
   4. stage statement + meta publicly, tool binaries + private seeds
      privately; stamp .data_version (a re-run is a deliberate re-pin).
@@ -36,6 +37,18 @@ from arbench.core.data_version import verify_data_version
 HF_REPO = "SakanaAI/ALE-Bench"
 TOOL_BINARIES = ("gen", "vis", "tester")
 
+# The staged binaries must run on every machine that grades or self-evaluates a
+# task, and those machines do not share a libc. The build box (lab, glibc 2.34)
+# is newer than the cluster that consumes the tasks (Myriad, RHEL 7.9, glibc
+# 2.17), so a default dynamic build dies at exec with
+# "/lib64/libc.so.6: version `GLIBC_2.18' not found". A statically linked musl
+# binary has no libc dependency at all and runs on both. This changes only the
+# LINK TARGET — the Rust source is upstream's own, from the <pid>.zip.
+BUILD_TARGET = "x86_64-unknown-linux-musl"
+# objdump's exact diagnostic for "parsed fine, no dynamic table" —
+# the only nonzero exit this check accepts (see _assert_static).
+_NOT_DYNAMIC = "not a dynamic object"
+
 
 def _fetch_zip(pid: str, zips_dir: Path) -> Path:
     """Fetch <pid>.zip via huggingface_hub. The dataset is Xet-backed, so the
@@ -55,16 +68,80 @@ def _fetch_zip(pid: str, zips_dir: Path) -> Path:
     return dest
 
 
+def _assert_static(binary: Path) -> None:
+    """Refuse a binary that still carries GLIBC symbols.
+
+    The guarantee we need is "runs on a host with an older libc", and the
+    observable form of that is: no dynamic GLIBC imports.
+
+    FAIL CLOSED, against a CLOSED SET of known-good outcomes. "objdump did
+    something unexpected" must never be read as "the binary is fine" — that
+    is the silent-failure shape this whole check exists to eliminate, so
+    only two shapes pass and everything else raises:
+
+      rc == 0                        objdump listed the dynamic table
+                                     normally (our static-PIE musl build
+                                     lands here, with an empty table);
+      rc == 1 + NOT_DYNAMIC on       objdump parsed the file and found no
+      stderr                         dynamic table at all — a fully static
+                                     NON-PIE build. Genuinely static, so it
+                                     satisfies the guarantee.
+
+    Both pass paths additionally require the object header, which is what
+    proves a parse happened. Everything else is refused: any other exit
+    code, rc == 1 with a different diagnostic (truncated file, permission
+    denied, "file format not recognized", a directory), a missing header,
+    or no objdump at all. Those all produce zero GLIBC lines too, and
+    treating that emptiness as "clean" would stage an unrunnable tool that
+    fails much later, on another host, as a silent zero score.
+    """
+    if shutil.which("objdump") is None:
+        raise SystemExit(
+            f"objdump not found — cannot verify {binary.name} is statically "
+            "linked. Install binutils, or the staged tools may be unrunnable "
+            "on hosts with an older glibc.")
+    proc = subprocess.run(["objdump", "-T", str(binary)],
+                          capture_output=True, text=True)
+    parsed = "file format" in proc.stdout
+    no_dynamic_table = proc.returncode == 1 and _NOT_DYNAMIC in proc.stderr
+    if not parsed or not (proc.returncode == 0 or no_dynamic_table):
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        raise RuntimeError(
+            f"{binary.name}: could not verify static linkage — objdump exited "
+            f"{proc.returncode} ({detail[:1]}). Refusing to stage a tool whose "
+            f"linkage is unknown.")
+    glibc = sorted({tok.strip("()") for line in proc.stdout.splitlines()
+                    if "GLIBC_" in line
+                    for tok in line.split() if "GLIBC_" in tok})
+    if glibc:
+        raise RuntimeError(
+            f"{binary.name}: dynamically linked against glibc "
+            f"({', '.join(glibc[:4])}) — expected a static {BUILD_TARGET} "
+            f"build. The staged tool would fail to exec on a host with an "
+            f"older libc.")
+
+
+def _ensure_build_target() -> None:
+    """Install the musl std once per run — it is a global toolchain setting,
+    not per-problem state, and `--all` would otherwise re-add it 40 times.
+    Tolerates failure: a non-rustup cargo may already target musl, and the
+    build itself is the authoritative error.
+    """
+    if shutil.which("rustup") is not None:
+        subprocess.run(["rustup", "target", "add", BUILD_TARGET],
+                       capture_output=True, check=False)
+
+
 def _build_tools(tools_dir: Path) -> Path:
-    """cargo build --release; returns the target bin dir."""
+    """cargo build --release for BUILD_TARGET; returns the target bin dir."""
     if shutil.which("cargo") is None:
         raise SystemExit(
             "cargo not found — install a user-level Rust toolchain first:\n"
             "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | "
             "sh -s -- -y   (no root needed)")
-    subprocess.run(["cargo", "build", "--release", "--quiet"],
-                   cwd=tools_dir, check=True)
-    return tools_dir / "target" / "release"
+    subprocess.run(["cargo", "build", "--release", "--quiet",
+                    "--target", BUILD_TARGET], cwd=tools_dir, check=True)
+    return tools_dir / "target" / BUILD_TARGET / "release"
 
 
 def _gen_cases(gen_binary: Path, seeds: list[int], workdir: Path) -> list[Path]:
@@ -131,6 +208,7 @@ def prepare_one(pid: str, public_root: Path, private_root: Path,
         for name in TOOL_BINARIES:
             built = bin_dir / name
             if built.is_file():
+                _assert_static(built)
                 shutil.copy2(built, priv / "bin" / name)
         (priv / "seeds.json").write_text(json.dumps(
             {"regime": regime, "private_seeds": private_seeds}))
@@ -184,6 +262,7 @@ def main(argv: list[str]) -> None:
     public_root = Path(os.environ.get("ALE_DATA_DIR", "data/ale/public"))
     private_root = Path(os.environ.get("ALE_PRIVATE_DATA_DIR",
                                        str(public_root.parent / "private")))
+    _ensure_build_target()
     for pid in ids:
         prepare_one(pid, public_root, private_root, full_seeds)
 
