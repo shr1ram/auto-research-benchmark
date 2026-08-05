@@ -48,14 +48,15 @@ def tasks_cmd(benchmark_name, data_dir):
 def splits_cmd(fractions, seed):
     """The split index: families (facts) and, given fractions, the automatic
     seeded role assignment (bank/val/test, stratified per family)."""
-    from arbench.core.splits import assign_roles, families, load_split_meta
+    from arbench.core.splits import (
+        BENCHMARKS, assign_roles, families, load_split_meta)
     fams = families()
     if not fractions:
         for fam, members in fams.items():
             click.echo(f"{fam} ({len(members)}):")
             for benchmark, task_id in members:
                 click.echo(f"  {task_id}")
-        for b in ("openml_tabular", "mlebench_lite"):
+        for b in BENCHMARKS:
             for task_id, e in load_split_meta(b).items():
                 if e.get("excluded"):
                     click.echo(f"excluded: {task_id} — {e['excluded']}")

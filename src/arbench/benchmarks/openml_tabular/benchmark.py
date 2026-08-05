@@ -1,6 +1,6 @@
 """OpenML tabular benchmark — the accumulation spine's dense tabular substrate.
 
-Mirrors mlebench_lite: it hands out benchmark-agnostic Tasks and grades submissions,
+It hands out benchmark-agnostic Tasks and grades submissions,
 never knowing which autoresearch system produced them. Data is staged by
 `prepare.py` under `$OPENML_DATA_DIR/<task_id>/prepared/` (see that file for layout).
 

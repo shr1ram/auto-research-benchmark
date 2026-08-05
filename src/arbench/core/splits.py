@@ -4,9 +4,9 @@
 Each plugin's splits.yaml records ONLY checkable facts — every task's FAMILY
 (a modality label: tabular / text / vision / other — the stratification unit;
 families are plain yaml strings, nothing here hardcodes them, so add/remove =
-edit the yaml) and exclusions with reasons. The tabular family spans both
-benchmarks; distance stays benchmark-relational via the benchmark filter and
-the manifests.
+edit the yaml) and exclusions with reasons. A family may span benchmarks;
+distance stays benchmark-relational via the benchmark filter and the
+manifests.
 Roles are computed, never stored:
 
     assign_roles({"bank": .5, "val": .2, "test": .3}, seed=0)
@@ -34,7 +34,7 @@ from typing import Any, Optional
 import yaml
 
 ROLES = ("bank", "val", "test")
-BENCHMARKS = ("openml_tabular", "mlebench_lite", "ale_bench")
+BENCHMARKS = ("openml_tabular", "ale_bench")
 
 TaskKey = tuple[str, str]   # (benchmark, task_id)
 

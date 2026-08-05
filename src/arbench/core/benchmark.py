@@ -15,7 +15,7 @@ from arbench.core.result import Score
 
 
 class Benchmark(ABC):
-    #: Short stable name, e.g. "mlebench_lite". Matches Task.benchmark.
+    #: Short stable name, e.g. "ale_bench". Matches Task.benchmark.
     name: str = "unnamed"
 
     @abstractmethod

@@ -5,7 +5,7 @@ deliberately EXCLUDES tasks a simple model already solves — i.e. headroom by c
 plus a few OpenML-CTR23 regression tasks for diversity. Each entry is
 plain data: an OpenML *dataset* id, the target column, the metric, and its direction.
 
-Data staging mirrors mlebench_lite: `prepare.py` materialises each task under
+Data staging: `prepare.py` materialises each task under
 `$OPENML_DATA_DIR/<task_id>/prepared/{train.csv, test.csv}` (public tree; answers.csv
 goes to the separate private root) with a fixed,
 seeded proxy/held-out split. The benchmark validates the prepared layout at load time.
