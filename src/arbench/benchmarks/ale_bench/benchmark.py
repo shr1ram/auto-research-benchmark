@@ -292,6 +292,41 @@ def _sandbox_prefix(private_root: Optional[Path] = None) -> list[str]:
     return cmd
 
 
+def assert_sandbox_works() -> None:
+    """Fail-closed probe that a grading sandbox can actually be BUILT here.
+
+    Presence is not capability: managed clusters ship the bwrap binary with
+    unprivileged user namespaces disabled (measured: Myriad login nodes have
+    max_user_namespaces=0, compute nodes 10000), where every confined case
+    would fail one at a time instead of the request failing once, loudly.
+    Same shape as arloop's `assert_bwrap_works()` — present AND able to
+    unshare."""
+    prefix = _sandbox_prefix()
+    if not prefix:
+        raise SandboxUnavailable(
+            "grading sandbox requested (sandbox=True) but bwrap is not "
+            "available on this host — install bubblewrap, or pass "
+            "sandbox=False to grade agent code unconfined")
+    try:
+        probe = subprocess.run(prefix + ["/bin/true"], capture_output=True,
+                               timeout=60)
+    except OSError as e:
+        raise SandboxUnavailable(
+            f"grading sandbox requested but bwrap cannot be executed: "
+            f"{e.__class__.__name__}: {e}") from e
+    except subprocess.TimeoutExpired as e:
+        raise SandboxUnavailable(
+            "grading sandbox requested but the bwrap probe hung for 60s") \
+            from e
+    if probe.returncode != 0:
+        raise SandboxUnavailable(
+            f"grading sandbox requested but bwrap cannot create namespaces "
+            f"on this host (rc={probe.returncode}: "
+            f"{probe.stderr.decode(errors='replace').strip()}) — unprivileged "
+            f"user namespaces are often disabled on login nodes; pass "
+            f"sandbox=False to grade agent code unconfined")
+
+
 def assert_tester_executes(tester: Path) -> None:
     """Fail-closed probe that a reactive task's public tester actually RUNS
     on this host, run once per task before any attempt.
@@ -308,7 +343,9 @@ def assert_tester_executes(tester: Path) -> None:
     rc=0 on the shipped binaries, but either way its own argument parser was
     reached, which proves the loader resolved every symbol). Only a binary
     that cannot load at all is fatal — this probe deliberately does NOT
-    require a particular exit code or message from a tester that runs."""
+    require a particular exit code or message from a tester that runs.
+    Death by a SIGNAL is the exception: no usage-exit is ever a signal, so
+    that is treated as fatal whatever the stderr says."""
     if not tester.is_file():
         raise ReactiveTesterUnavailable(f"reactive tester missing at {tester}")
     if not os.access(tester, os.X_OK):
@@ -323,10 +360,21 @@ def assert_tester_executes(tester: Path) -> None:
     except subprocess.TimeoutExpired as e:
         raise ReactiveTesterUnavailable(
             f"reactive tester at {tester} hung for 60s on a bare exec") from e
-    # A loader failure never reaches the program: ld.so writes to stderr and
-    # exits NONZERO without running main. Bare `tester` with no arguments is
-    # itself allowed to exit nonzero (usage), so neither signal alone is
-    # sufficient — only the pair means the binary could not load.
+    # Death by SIGNAL is unconditionally fatal: a binary that reached its own
+    # argument parser exits normally, so a signal means it never got there.
+    # This catches the modes that carry no ld.so text at all — SIGILL from a
+    # binary built for another microarchitecture (target-cpu=native, AVX-512
+    # on a host without it), SIGSEGV/SIGABRT in startup — which would
+    # otherwise reproduce this PR's own defect through a different door.
+    if probe.returncode < 0:
+        raise ReactiveTesterUnavailable(
+            f"reactive tester at {tester} was killed by signal "
+            f"{-probe.returncode} on a bare exec — it cannot start on this "
+            f"host, so it would never run for the agent either")
+    # A loader failure never reaches the program either: ld.so writes to
+    # stderr and exits NONZERO without running main. Bare `tester` with no
+    # arguments is itself allowed to exit nonzero (usage), so for a plain
+    # nonzero exit the ld.so text is what distinguishes the two.
     if probe.returncode == 0:
         return
     err = (probe.stderr or b"").decode(errors="replace")
@@ -538,6 +586,14 @@ class ALEBench(Benchmark):
         # None = auto (bwrap if present); tests pass False for portability
         self.sandbox = shutil.which("bwrap") is not None if sandbox is None \
             else sandbox
+        # An EXPLICIT request is a promise this object cannot keep silently.
+        # Verified HERE, at construction, because grade() must never raise
+        # (Benchmark ABC) and because an operator who asked for confinement
+        # must find out before a grid starts, not per-case mid-run. Auto-
+        # detect never reaches this: it only turns the sandbox ON when bwrap
+        # is already present, and a bwrap-less host resolves to False.
+        if sandbox is True:
+            assert_sandbox_works()
 
     # ------------------------------------------------------------- tasks
 
@@ -676,16 +732,10 @@ class ALEBench(Benchmark):
             return Score.invalid(f"private-tree drift: {e}",
                                  is_higher_better=hb)
         time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
-        # resolved ONCE. A sandbox that was REQUESTED but cannot be built is
-        # fatal, not a degrade: grading agent code unconfined is a different
-        # experiment from the one that was asked for, and `details` recording
-        # it afterwards only helps an operator who thought to diff. Hosts that
-        # never asked (`sandbox` auto-detected False) are untouched.
-        if self.sandbox and not _sandbox_prefix():
-            raise SandboxUnavailable(
-                "grading sandbox requested (sandbox=True) but bwrap is not "
-                "available on this host — install bubblewrap, or pass "
-                "sandbox=False to grade agent code unconfined")
+        # Resolved ONCE, and already proven usable: an explicitly requested
+        # sandbox is verified in __init__, so by here `self.sandbox` is the
+        # truth rather than a hope. grade() must never raise (Benchmark ABC),
+        # which is exactly why the check cannot live here.
         sandboxed = self.sandbox
 
         # Cases are independent (own tempdir, own cwd, own sandbox mount

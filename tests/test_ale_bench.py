@@ -15,7 +15,8 @@ import pytest
 
 from arbench.benchmarks.ale_bench.benchmark import (
     MAX_SUBMISSION_BYTES, PYTHON_TIME_SCALE, ALEBench,
-    ReactiveTesterUnavailable, SandboxUnavailable, assert_tester_executes,
+    ReactiveTesterUnavailable, SandboxUnavailable, assert_sandbox_works,
+    assert_tester_executes,
 )
 from arbench.benchmarks.ale_bench.tasks import ALL_PROBLEMS, LITE_PROBLEMS
 
@@ -909,24 +910,87 @@ def test_reactive_contract_forbids_swallowing_the_tester_failure(tmp_path):
 # --------------------------------- fail-loud: requested sandbox is absent
 
 
-def test_requested_sandbox_without_bwrap_raises(tmp_path, monkeypatch):
-    """An explicitly requested sandbox that cannot be built must RAISE.
-    Previously _sandbox_prefix() returned [] and grading ran UNCONFINED with
-    no exception, leaving only descriptive metadata an operator had to think
-    to diff."""
+def test_requested_sandbox_without_bwrap_raises_at_construction(tmp_path,
+                                                                monkeypatch):
+    """An explicitly requested sandbox that cannot be built must RAISE, and
+    must do so at CONSTRUCTION: grade() is contractually forbidden from
+    raising (Benchmark ABC), and an operator who asked for confinement needs
+    to know before a grid starts, not per-case mid-run."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    with pytest.raises(SandboxUnavailable) as e:
+        ALEBench(data_dir=str(tmp_path / "public"),
+                 private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert "bwrap" in str(e.value)
+
+
+def test_grade_never_raises_for_an_unavailable_sandbox(tmp_path, monkeypatch):
+    """The ABC contract itself: `grade` must return Score.invalid(...), never
+    raise. Guarding this directly because a raise here does not merely escape
+    a grid — Benchmark.validate_submission catches Exception broadly and
+    converts it into a generic FORMAT rejection, silently blaming the agent's
+    submission for a host misconfiguration."""
     import arbench.benchmarks.ale_bench.benchmark as B
     _stage(tmp_path)
-    task = _bench(tmp_path).load_task(TASK)
-    sub = tmp_path / "submission.py"
-    sub.write_text("print(int(input()))\n")
-    # a host with no bwrap
-    monkeypatch.setattr(B.shutil, "which", lambda name: None)
+    # construct with a WORKING sandbox so __init__'s check passes...
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c", "pass"])
     bench = ALEBench(data_dir=str(tmp_path / "public"),
                      private_data_dir=str(tmp_path / "private"),
                      sandbox=True, workers=1)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(int(input()))\n")
+    # ...then the sandbox becomes unavailable underneath it. This is exactly
+    # the state the pre-review code raised on, so a reintroduced raise inside
+    # grade() fails this test rather than slipping through.
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [])
+    score = bench.grade(task, sub)          # must NOT raise (Benchmark ABC)
+    assert score.valid
+
+
+def test_requested_sandbox_with_broken_userns_raises(tmp_path, monkeypatch):
+    """bwrap PRESENT but unable to unshare (login nodes with
+    max_user_namespaces=0) must fail loudly up front, not once per case.
+    Presence is not capability."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B.shutil, "which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c",
+        "import sys; sys.stderr.write('bwrap: No permissions to creat"
+        "e new namespace' + chr(10)); sys.exit(1)"])
     with pytest.raises(SandboxUnavailable) as e:
-        bench.grade(task, sub)
-    assert "bwrap" in str(e.value)
+        ALEBench(data_dir=str(tmp_path / "public"),
+                 private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert "namespace" in str(e.value)
+
+
+def test_sandbox_probe_accepts_a_working_bwrap(tmp_path, monkeypatch):
+    """The unchanged path: a bwrap that CAN build a namespace is accepted and
+    construction proceeds."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [
+        sys.executable, "-c", "pass"])
+    assert_sandbox_works()                                # does not raise
+    bench = ALEBench(data_dir=str(tmp_path / "public"),
+                     private_data_dir=str(tmp_path / "private"), sandbox=True)
+    assert bench.sandbox is True
+
+
+def test_autodetect_never_probes_the_sandbox(tmp_path, monkeypatch):
+    """Auto-detect (sandbox=None) must not run the probe at all: it only ever
+    turns the sandbox ON where bwrap is already present, and paying a
+    subprocess on every construction would be a real cost on a bwrap-less
+    host that never asked."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    calls = []
+    monkeypatch.setattr(B, "assert_sandbox_works",
+                        lambda: calls.append(1))
+    ALEBench(data_dir=str(tmp_path / "public"),
+             private_data_dir=str(tmp_path / "private"))
+    ALEBench(data_dir=str(tmp_path / "public"),
+             private_data_dir=str(tmp_path / "private"), sandbox=False)
+    assert calls == []
 
 
 def test_sandbox_autodetect_on_a_bwrapless_host_still_grades(tmp_path,
@@ -963,3 +1027,34 @@ def test_requested_sandbox_that_is_available_grades_sandboxed(tmp_path,
     sub.write_text("print(int(input()))\n")
     score = bench.grade(task, sub)
     assert score.valid and score.details["sandboxed"] is True
+
+
+def test_tester_killed_by_a_signal_is_refused(tmp_path):
+    """A tester that dies by SIGNAL never reached its argument parser, so it
+    cannot run here — even though it prints no ld.so text. SIGILL is the real
+    case: a binary built with target-cpu=native (AVX-512) on a host that
+    lacks those instructions. Without this the fail-silently defect returns
+    through a different door."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import os, signal
+os.kill(os.getpid(), signal.SIGILL)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(ReactiveTesterUnavailable) as e:
+        _bench(tmp_path).load_task(TASK)
+    assert "signal" in str(e.value)
+
+
+def test_tester_killed_by_sigsegv_is_refused(tmp_path):
+    """Any startup abort counts, not just SIGILL."""
+    pub, _ = _stage(tmp_path, problem_type="reactive")
+    t = pub / "bin" / "tester"
+    t.write_text(f"""#!{sys.executable}
+import os, signal
+os.kill(os.getpid(), signal.SIGSEGV)
+""")
+    t.chmod(t.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(ReactiveTesterUnavailable):
+        _bench(tmp_path).load_task(TASK)
