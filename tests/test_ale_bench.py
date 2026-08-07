@@ -890,26 +890,16 @@ def test_batch_tasks_do_not_probe_a_tester(tmp_path):
     assert task.metadata["problem_type"] == "batch"
 
 
-def test_reactive_contract_forbids_swallowing_the_tester_failure(tmp_path):
-    """The contract text now tells the agent that a failed tester call is
-    fatal. This is defence in depth behind the preflight (an agent may still
-    disobey), and it is asserted here because it is prompt text: changing it
-    changes the config hash."""
+def test_reactive_contract_promises_harness_scoring(tmp_path):
+    """The contract text tells the agent the HARNESS runs the official
+    tester on every public case and that no result.json is needed; the
+    tester remains staged for optional self-testing. Asserted here because
+    it is prompt text: changing it changes the config hash."""
     _stage(tmp_path, problem_type="reactive")
     goal = _bench(tmp_path).load_task(TASK).goal
-    assert "MANDATORY" in goal and "FATAL" in goal
-    assert "bare `except`" in goal
-    # the batch contract is deliberately untouched (its hash must not fork)
-    _stage(tmp_path / "b", problem_type="batch")
-    batch_goal = ALEBench(data_dir=str(tmp_path / "b" / "public"),
-                          private_data_dir=str(tmp_path / "b" / "private"),
-                          sandbox=False).load_task(TASK).goal
-    assert "MANDATORY" not in batch_goal
-
-
-# --------------------------------- fail-loud: requested sandbox is absent
-
-
+    assert "OFFICIAL judge (`tester`)" in goal
+    assert "no result.json is needed" in goal
+    assert "tester" in goal and "Score = N" in goal   # self-test recipe
 def test_requested_sandbox_without_bwrap_raises_at_construction(tmp_path,
                                                                 monkeypatch):
     """An explicitly requested sandbox that cannot be built must RAISE, and
@@ -1058,3 +1048,91 @@ os.kill(os.getpid(), signal.SIGSEGV)
     t.chmod(t.stat().st_mode | stat.S_IEXEC)
     with pytest.raises(ReactiveTesterUnavailable):
         _bench(tmp_path).load_task(TASK)
+
+
+# ------------------------------------------------------------ public eval
+
+def test_public_eval_scores_public_cases_with_diagnostics(tmp_path):
+    """Batch: official vis over the PUBLIC cases; mean score; the scorer's
+    own diagnostic line rides back in details['feedback']."""
+    pub, priv = _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    # echoes the case number for case 3, prints BAD (vis rejects) for case 4
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys\n"
+                   "n = sys.stdin.readline().strip()\n"
+                   "print('BAD' if n == '4' else n)\n")
+    s = bench.public_eval(task, sub)
+    assert s.valid and s.is_higher_better
+    # public cases are 3 and 4: case 3 -> 3*2=6 ok; case 4 -> BAD rejected=0
+    assert s.value == pytest.approx(6 / 2)
+    assert s.details["public_eval"] is True
+    assert s.details["n_rejected"] == 1
+    assert [c["status"] for c in s.details["cases"]] == ["ok", "rejected"]
+    assert "1 rejected" in s.details["feedback"]
+    assert "invalid output" in s.details["feedback"]   # vis's own words
+    assert "infra" not in s.details
+
+
+def test_public_eval_minimize_with_failed_case_is_invalid(tmp_path):
+    pub, priv = _stage(tmp_path, score_type="minimize")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys\n"
+                   "n = sys.stdin.readline().strip()\n"
+                   "print('BAD' if n == '4' else n)\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid and not s.is_higher_better
+    assert "minimize" in s.details["reason"]
+    assert s.details["cases"]                     # per-case rows still there
+    assert "infra" not in s.details
+
+
+def test_public_eval_reactive_uses_the_public_tester(tmp_path):
+    pub, priv = _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys\n"
+                   "n = sys.stdin.readline().strip()\n"
+                   "print(n); sys.stdout.flush()\n")
+    s = bench.public_eval(task, sub)
+    assert s.valid
+    # tester scores reply*10; public cases 3 and 4 -> (30+40)/2
+    assert s.value == pytest.approx((30 + 40) / 2)
+    assert s.details["n_cases"] == 2
+
+
+def test_public_eval_missing_staging_is_marked_infra(tmp_path):
+    pub, priv = _stage(tmp_path)
+    (priv / "bin" / "vis").unlink()               # scorer gone: operator bug
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details.get("infra") is True
+
+
+def test_public_eval_all_failed_is_invalid_not_zero(tmp_path):
+    pub, priv = _stage(tmp_path)
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("raise RuntimeError('boom')\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details["n_error"] == 2
+    assert "boom" in s.details["feedback"]        # the crash line rides back
+    assert "infra" not in s.details
+
+
+def test_contract_text_promises_official_scoring(tmp_path):
+    pub, priv = _stage(tmp_path)
+    task = _bench(tmp_path).load_task(TASK)
+    assert "OFFICIAL contest scorer" in task.goal
+    assert "result.json" in task.goal             # told it is NOT needed
+    assert "no result.json is needed" in task.goal
