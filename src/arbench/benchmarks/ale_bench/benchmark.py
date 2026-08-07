@@ -212,21 +212,21 @@ _CONTRACT = """
 - Write your final solver to `submission.py` in your working directory: a
   SINGLE-FILE Python 3 program that reads ONE input case from standard input
   and writes the answer to standard output ({time_note}).
-- The public input cases are the files under: {cases_dir}
-  (named case_<i>.txt — read EVERY file in that directory; do not
-  assume any other naming pattern).
-  Run your solver on every one of them, compute your score for each case
-  using the scoring rule defined in the statement above, and write the MEAN
-  into result.json. This problem {direction_note} — report a higher-is-better
-  number (negate the mean if the problem minimises).
-- The hidden test set uses the same case generator; your reported score is
-  your own estimate of your solver's true quality.
-- Your script MUST END by writing result.json containing a NUMERIC "score".
-  A run that exits 0 without a numeric score in result.json is INVALID and
-  scores nothing, however good the solver was: make sure the scoring block is
-  always reached (not left unreachable after an early return/exit), and that
-  the value is a real number — NaN and inf are NOT numeric, so guard
-  degenerate cases before writing.
+- When your script finishes, the harness runs submission.py on EVERY public
+  case (the files under {cases_dir}, named case_<i>.txt) and scores each
+  output with the OFFICIAL contest scorer under the official time limit.
+  Your attempt's score is the mean official case score. This problem
+  {direction_note}; the harness reports your score so that higher is always
+  better. Per-case failures (time limit exceeded, output rejected, crash)
+  come back to you with the scorer's own diagnostics.
+- You do NOT score yourself: no result.json is needed, and your own estimate
+  of quality is never used. The official scorer enforces every validity rule
+  in the statement exactly — an output that violates a constraint scores 0
+  for that case no matter how good it looks otherwise.
+- You may read the public cases (path above) to test your solver inside
+  solution.py before it finishes; keep within the script time ceiling.
+- The hidden test set uses the same case generator, so the official public
+  score is your best available estimate of true quality.
 """
 
 _CONTRACT_REACTIVE = """
@@ -241,29 +241,21 @@ _CONTRACT_REACTIVE = """
   not flush after each message will hang and time out.
 - Write your final solver to `submission.py`: a SINGLE-FILE Python 3 program
   implementing that protocol ({time_note}).
-- The public cases + the official judge (`tester`) are staged for you. Score
-  your solver on each public case by running:
+- When your script finishes, the harness runs the OFFICIAL judge (`tester`)
+  against submission.py on EVERY public case (the files under {cases_dir},
+  named case_<i>.txt) under the official time limit. Your attempt's score is
+  the mean of the tester's official scores. This problem {direction_note};
+  the harness reports your score so that higher is always better. Per-case
+  failures (time limit exceeded, rejected interaction, crash) come back to
+  you with the tester's own diagnostics.
+- You do NOT score yourself: no result.json is needed, and your own estimate
+  of quality is never used.
+- To test your solver yourself inside solution.py before it finishes, the
+  same official tester is staged for you:
       {tester} {python} submission.py < <case-file>
-  (the case files are under {cases_dir}, named case_<i>.txt — read EVERY
-  file in that directory; do not assume any other naming pattern); the
-  tester prints "Score = N" on
-  its standard error. Write the MEAN score across the public cases into
-  result.json. This problem {direction_note} — report a higher-is-better
-  number (negate the mean if the problem minimises).
-- The hidden test set uses the same generator; your reported score is your
-  own estimate of your solver's true quality.
-- Running the tester is MANDATORY and its failure is FATAL. If a tester
-  invocation fails to run, times out, or prints no "Score = N", do NOT catch
-  the error, substitute a default, or fall back to a placeholder score — let
-  your script DIE with the error. A score you did not measure is worse than
-  no score at all, because it is indistinguishable from a real one. Never
-  wrap the tester call in a bare `except`.
-- Your script MUST END by writing result.json containing a NUMERIC "score".
-  A run that exits 0 without a numeric score in result.json is INVALID and
-  scores nothing, however good the solver was: make sure the scoring block is
-  always reached (not left unreachable after an early return/exit), and that
-  the value is a real number — NaN and inf are NOT numeric, so guard
-  degenerate cases before writing.
+  (it prints "Score = N" on its standard error).
+- The hidden test set uses the same case generator, so the official public
+  score is your best available estimate of true quality.
 """
 
 
@@ -440,19 +432,34 @@ def _case_row(case_file: Path, status: str, score: Optional[int]) -> dict:
             "score": score if status == "ok" else None}
 
 
-def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
-    """Official scorer: `vis <input> <output>` prints 'Score = N'. None if
-    the scorer rejects the output (invalid answer) or emits no score. cwd is
-    the output's private tempdir: vis writes vis.html into its cwd, and
+def _score_case_msg(vis: Path, case_file: Path, out_path: Path
+                    ) -> tuple[Optional[int], str, bool]:
+    """Official scorer: `vis <input> <output>` prints 'Score = N'. Returns
+    (score, diagnostic, scorer_failed): score is None if the scorer rejects
+    the output or emits no score; diagnostic is the scorer's own first
+    non-score line ("rectangles 2 and 7 overlap"), captured for public_eval
+    feedback — the scorer only ever sees the case and the output, both
+    public on the eval path, so the line is safe to forward; scorer_failed
+    marks the scorer itself failing to RUN (timeout/launch error) — an
+    infrastructure fact about the host, never a verdict on the output, and
+    public_eval must not let it masquerade as a rejected answer. cwd is the
+    output's private tempdir: vis writes vis.html into its cwd, and
     concurrent grid cells grading at once must not share scratch space."""
     try:
         proc = subprocess.run([str(vis), str(case_file), str(out_path)],
                               capture_output=True, text=True, timeout=60,
                               cwd=out_path.parent)
-        matches = _SCORE_RE.findall(proc.stdout + proc.stderr)
-        return int(matches[-1]) if matches else None
-    except (subprocess.TimeoutExpired, OSError):
-        return None
+        text = proc.stdout + proc.stderr
+        matches = _SCORE_RE.findall(text)
+        msg = next((ln.strip() for ln in text.splitlines()
+                    if ln.strip() and not _SCORE_RE.search(ln)), "")
+        return (int(matches[-1]) if matches else None), msg[:200], False
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return None, f"scorer failed to run: {e.__class__.__name__}", True
+
+
+def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
+    return _score_case_msg(vis, case_file, out_path)[0]
 
 
 def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
@@ -612,6 +619,173 @@ class ALEBench(Benchmark):
                                "ALE_DATA_DIR (private/ sibling convention)")
         return self.private_dir / task_id
 
+    # ------------------------------------------------------- public eval
+
+    def public_eval(self, task: Task, submission_path: Path) -> Score:
+        """Official scoring on the PUBLIC cases — the loop's score signal.
+
+        Exists because the previous contract made the agent implement the
+        statement's scoring rule itself, and the E2 held-out regrade priced
+        that: 25% of proxy "improvements" graded to zero (validity rules the
+        self-scorers never implement) and 23% of runs ended captured by a
+        phantom self-score. ALE-Bench's own session API does exactly this
+        (session.public_eval between attempts, private_eval once at the
+        end); real AHC contestants likewise get official provisional
+        results per submission, never their own estimate.
+
+        Same machinery and posture as grade() — official scorer, official
+        time limit x PYTHON_TIME_SCALE, sandboxed when available,
+        concurrent per case — but over the PUBLIC cases, so per the ABC
+        contract everything returned is built from agent-readable inputs
+        plus the official tools and may cross into the loop: value (the
+        MEAN official case score, raw contest sign; is_higher_better
+        carries direction), details["cases"], and details["feedback"] (a
+        counts line plus the scorer's own first diagnostics). A failed case
+        is 0 in the mean on a maximise problem; on a minimise problem ANY
+        failed case makes the eval invalid (a zero would read as an
+        improvement) with the failure detail in the feedback. That
+        asymmetry makes invalid-attempt rates DIRECTION-DEPENDENT under
+        load — a contention TLE costs 1/n of a maximise mean but voids a
+        minimise attempt — so cross-problem analyses must stratify by
+        score direction, or the asymmetry masquerades as task difficulty.
+        details["infra"] = True only for staging problems — never for
+        anything the agent's code did."""
+        meta = task.metadata
+        hb = meta.get("score_type") == "maximize"
+        sub = Path(submission_path)
+        if not sub.is_file():
+            return Score.invalid("submission.py missing or not a regular "
+                                 "file", is_higher_better=hb)
+        reactive = meta.get("problem_type") == "reactive"
+        pub = Path(task.data_dir)
+        case_files = sorted((pub / "cases").glob("case_*.txt")) \
+            if (pub / "cases").is_dir() else []
+        if reactive:
+            scorer = pub / "bin" / "tester"
+        elif self.private_dir:
+            scorer = self.private_dir / task.task_id / "bin" / "vis"
+        else:
+            # _private() raises here, and public_eval must never raise
+            s = Score.invalid(
+                "no private root for the official scorer: set "
+                "ALE_PRIVATE_DATA_DIR (private/ sibling convention)",
+                is_higher_better=hb)
+            s.details["infra"] = True
+            return s
+        expected = meta.get("n_public_cases")
+        if not case_files or not scorer.is_file() or \
+                (expected is not None and len(case_files) != expected):
+            # a PARTIAL public staging would silently shift both the mean's
+            # denominator and the score — same guard grade() applies to the
+            # private tree
+            s = Score.invalid(
+                f"public staging incomplete for {task.task_id}: "
+                f"{len(case_files)} cases (meta expects {expected}), "
+                f"scorer {'present' if scorer.is_file() else 'MISSING'} — "
+                f"run scripts/prepare_ale_bench.py on this host",
+                is_higher_better=hb)
+            s.details["infra"] = True
+            return s
+        time_limit = float(meta.get("time_limit_s") or 2.0) * PYTHON_TIME_SCALE
+        sandboxed = self.sandbox
+        workers = self.workers if self.workers is not None else grade_workers()
+
+        def run(item):
+            index, cf = item
+            # same bwrap-setup-race retry grade()'s _grade_one_case applies:
+            # a transient mount race is the sandbox misfiring, and without
+            # the retry it would be fed back to the agent as a failed case
+            for attempt in range(_BWRAP_RETRY_ATTEMPTS):
+                msg, scorer_failed = "", False
+                with tempfile.TemporaryDirectory(prefix="ale-pubeval-") as td:
+                    if reactive:
+                        outcome, score, err = _run_and_score_reactive(
+                            scorer, sub, cf, time_limit, sandboxed, cwd=td)
+                        if outcome != "ok":
+                            msg = err.decode(errors="replace").strip()
+                            msg = msg.splitlines()[-1][:200] if msg else ""
+                    else:
+                        out_path = Path(td) / "case.out"
+                        outcome, err = _run_case(sub, cf, out_path,
+                                                 time_limit, sandboxed)
+                        score = None
+                        if outcome == "ok":
+                            score, msg, scorer_failed = _score_case_msg(
+                                scorer, cf, out_path)
+                        elif outcome == "error":
+                            tail = err.decode(errors="replace").strip()
+                            msg = tail.splitlines()[-1][:200] if tail else ""
+                raced = (outcome == "error" and sandboxed
+                         and _BWRAP_SETUP_RACE_RE.search(err) is not None)
+                if not raced or attempt == _BWRAP_RETRY_ATTEMPTS - 1:
+                    break
+                time.sleep(_BWRAP_RETRY_BACKOFF_S)
+            if outcome == "too_long":
+                outcome = "rejected"
+            elif outcome not in ("tle", "error") and score is None:
+                outcome = "rejected"
+            return index, outcome, score, msg, scorer_failed
+
+        if workers == 1:
+            results = [run(w) for w in enumerate(case_files)]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(run, enumerate(case_files)))
+        results.sort(key=lambda r: r[0])
+
+        total, n_tle, n_error, n_rejected = 0, 0, 0, 0
+        cases, diags, scorer_failures = [], [], []
+        for index, outcome, case_score, msg, scorer_failed in results:
+            if scorer_failed:
+                scorer_failures.append(f"{case_files[index].name}: {msg}")
+            if outcome == "tle":
+                n_tle += 1
+            elif outcome == "error":
+                n_error += 1
+            elif outcome == "rejected":
+                n_rejected += 1
+            else:
+                total += case_score
+            cases.append(_case_row(case_files[index], outcome, case_score))
+            if msg and len(diags) < 3:
+                diags.append(f"{case_files[index].name}: {msg}")
+        if scorer_failures:
+            # the OFFICIAL SCORER failing to run is a host fault: feeding it
+            # back as a rejected/zero case would hand the agent an outage
+            # dressed up as a score
+            s = Score.invalid(
+                f"official scorer failed on {len(scorer_failures)} case(s): "
+                + "; ".join(scorer_failures[:3]), is_higher_better=hb)
+            s.details["infra"] = True
+            return s
+        n = len(case_files)
+        n_failed = n_tle + n_error + n_rejected
+        mean = total / n
+        summary = (f"official public eval: {n - n_failed}/{n} cases scored"
+                   + (f"; {n_tle} over the "
+                      f"{time_limit:.0f}s time limit" if n_tle else "")
+                   + (f"; {n_rejected} rejected" if n_rejected else "")
+                   + (f"; {n_error} crashed" if n_error else "")
+                   + (". " + " | ".join(diags) if diags else ""))
+        details = {"n_cases": n, "n_tle": n_tle, "n_error": n_error,
+                   "n_rejected": n_rejected, "time_limit_s": time_limit,
+                   "python_time_scale": PYTHON_TIME_SCALE,
+                   "sandboxed": sandboxed, "public_eval": True,
+                   "feedback": summary, "cases": cases}
+        if n_failed == n:
+            s = Score.invalid(f"no case produced a scoreable output — "
+                              f"{summary}", is_higher_better=hb)
+            s.details.update(details)
+            return s
+        if n_failed and not hb:
+            # a failed case contributing 0 would IMPROVE a minimize mean
+            s = Score.invalid(f"{n_failed} failed case(s) on a minimize "
+                              f"problem — {summary}", is_higher_better=hb)
+            s.details.update(details)
+            return s
+        return Score(value=float(mean), valid=True, is_higher_better=hb,
+                     details=details)
+
     def load_task(self, task_id: str) -> Task:
         if task_id not in ALL_PROBLEMS:
             raise RuntimeError(f"unknown ale_bench task {task_id!r}; "
@@ -655,10 +829,12 @@ class ALEBench(Benchmark):
                 direction_note=f"{score_type.upper()}S its score")
         return Task(
             task_id=task_id, benchmark=self.name, goal=goal,
-            eval=(f"official AtCoder Heuristic Contest scorer over hidden "
-                  f"cases; absolute score, {score_type} "
+            eval=(f"official AtCoder Heuristic Contest scorer; the harness "
+                  f"scores every attempt on the public cases and the hidden "
+                  f"cases use the same generator; absolute score, "
+                  f"{score_type} "
                   f"({'higher' if score_type == 'maximize' else 'lower'} is "
-                  f"better on the judge; your result.json must always report "
+                  f"better on the judge; scores reported to you are always "
                   f"higher-is-better)"),
             data_dir=prep,
             submission_filename="submission.py",

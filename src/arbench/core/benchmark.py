@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 from arbench.core.task import Task
 from arbench.core.result import Score
@@ -42,6 +42,25 @@ class Benchmark(ABC):
     GENERIC_INVALID = ("submission failed the benchmark's validity check; "
                        "match the format the task describes (see "
                        "sample_submission if provided)")
+
+    def public_eval(self, task: Task,
+                    submission_path: Path) -> Optional[Score]:
+        """OFFICIAL evaluation on the PUBLIC inputs — the in-loop score.
+
+        None (the default) means this benchmark has no harness-side public
+        evaluation and the loop should keep its self-reported score source.
+
+        FIREWALL CONTRACT, deliberately different from grade(): every field
+        of the returned Score — value, per-case rows, and especially
+        details["feedback"] — MAY be forwarded verbatim into a running agent
+        loop, so an implementation must build them ONLY from inputs the
+        agent can already read (the public cases) plus the official scoring
+        tools. Nothing derived from the private trees may appear, including
+        in error text. details["infra"] = True marks a staging/operator
+        failure (missing scorer, missing cases): the loop must fail the run
+        loudly, never feed it to the agent as if it were the agent's bug.
+        Like grade(), must never raise."""
+        return None
 
     def validate_submission(self, task: Task,
                             submission_path: Path) -> tuple[bool, str | None]:
