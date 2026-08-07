@@ -1136,3 +1136,34 @@ def test_contract_text_promises_official_scoring(tmp_path):
     assert "OFFICIAL contest scorer" in task.goal
     assert "result.json" in task.goal             # told it is NOT needed
     assert "no result.json is needed" in task.goal
+
+
+def test_public_eval_partial_public_staging_is_infra(tmp_path):
+    """A missing public case shifts the mean's denominator: infra, never a
+    score the loop can learn from."""
+    pub, priv = _stage(tmp_path)
+    (pub / "cases" / "case_0001.txt").unlink()
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details.get("infra") is True
+
+
+def test_public_eval_scorer_outage_is_infra_not_a_zero(tmp_path):
+    """The official scorer failing to RUN is a host fault; it must not be
+    fed back to the agent as a rejected/zero case."""
+    import stat as _stat
+    pub, priv = _stage(tmp_path)
+    vis = priv / "bin" / "vis"
+    vis.chmod(_stat.S_IRUSR | _stat.S_IWUSR)     # not executable -> OSError
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys; print(sys.stdin.readline().strip())\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details.get("infra") is True
+    assert "scorer failed" in s.details["reason"]

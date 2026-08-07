@@ -433,15 +433,18 @@ def _case_row(case_file: Path, status: str, score: Optional[int]) -> dict:
 
 
 def _score_case_msg(vis: Path, case_file: Path, out_path: Path
-                    ) -> tuple[Optional[int], str]:
+                    ) -> tuple[Optional[int], str, bool]:
     """Official scorer: `vis <input> <output>` prints 'Score = N'. Returns
-    (score, diagnostic): score is None if the scorer rejects the output or
-    emits no score; diagnostic is the scorer's own first non-score line
-    ("rectangles 2 and 7 overlap"), captured for public_eval feedback — the
-    scorer only ever sees the case and the output, both public on the eval
-    path, so the line is safe to forward. cwd is the output's private
-    tempdir: vis writes vis.html into its cwd, and concurrent grid cells
-    grading at once must not share scratch space."""
+    (score, diagnostic, scorer_failed): score is None if the scorer rejects
+    the output or emits no score; diagnostic is the scorer's own first
+    non-score line ("rectangles 2 and 7 overlap"), captured for public_eval
+    feedback — the scorer only ever sees the case and the output, both
+    public on the eval path, so the line is safe to forward; scorer_failed
+    marks the scorer itself failing to RUN (timeout/launch error) — an
+    infrastructure fact about the host, never a verdict on the output, and
+    public_eval must not let it masquerade as a rejected answer. cwd is the
+    output's private tempdir: vis writes vis.html into its cwd, and
+    concurrent grid cells grading at once must not share scratch space."""
     try:
         proc = subprocess.run([str(vis), str(case_file), str(out_path)],
                               capture_output=True, text=True, timeout=60,
@@ -450,9 +453,9 @@ def _score_case_msg(vis: Path, case_file: Path, out_path: Path
         matches = _SCORE_RE.findall(text)
         msg = next((ln.strip() for ln in text.splitlines()
                     if ln.strip() and not _SCORE_RE.search(ln)), "")
-        return (int(matches[-1]) if matches else None), msg[:200]
+        return (int(matches[-1]) if matches else None), msg[:200], False
     except (subprocess.TimeoutExpired, OSError) as e:
-        return None, f"scorer failed to run: {e.__class__.__name__}"
+        return None, f"scorer failed to run: {e.__class__.__name__}", True
 
 
 def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
@@ -655,10 +658,17 @@ class ALEBench(Benchmark):
             if (pub / "cases").is_dir() else []
         scorer = (pub / "bin" / "tester") if reactive \
             else self._private(task.task_id) / "bin" / "vis"
-        if not case_files or not scorer.is_file():
+        expected = meta.get("n_public_cases")
+        if not case_files or not scorer.is_file() or \
+                (expected is not None and len(case_files) != expected):
+            # a PARTIAL public staging would silently shift both the mean's
+            # denominator and the score — same guard grade() applies to the
+            # private tree
             s = Score.invalid(
-                f"public cases/scorer not staged for {task.task_id} — run "
-                f"scripts/prepare_ale_bench.py on this host",
+                f"public staging incomplete for {task.task_id}: "
+                f"{len(case_files)} cases (meta expects {expected}), "
+                f"scorer {'present' if scorer.is_file() else 'MISSING'} — "
+                f"run scripts/prepare_ale_bench.py on this host",
                 is_higher_better=hb)
             s.details["infra"] = True
             return s
@@ -668,29 +678,39 @@ class ALEBench(Benchmark):
 
         def run(item):
             index, cf = item
-            msg = ""
-            with tempfile.TemporaryDirectory(prefix="ale-pubeval-") as td:
-                if reactive:
-                    outcome, score, err = _run_and_score_reactive(
-                        scorer, sub, cf, time_limit, sandboxed, cwd=td)
-                    if outcome != "ok" or not score:
-                        msg = err.decode(errors="replace").strip()
-                        msg = msg.splitlines()[-1][:200] if msg else ""
-                else:
-                    out_path = Path(td) / "case.out"
-                    outcome, err = _run_case(sub, cf, out_path, time_limit,
-                                             sandboxed)
-                    score = None
-                    if outcome == "ok":
-                        score, msg = _score_case_msg(scorer, cf, out_path)
-                    elif outcome == "error":
-                        tail = err.decode(errors="replace").strip()
-                        msg = tail.splitlines()[-1][:200] if tail else ""
+            # same bwrap-setup-race retry grade()'s _grade_one_case applies:
+            # a transient mount race is the sandbox misfiring, and without
+            # the retry it would be fed back to the agent as a failed case
+            for attempt in range(_BWRAP_RETRY_ATTEMPTS):
+                msg, scorer_failed = "", False
+                with tempfile.TemporaryDirectory(prefix="ale-pubeval-") as td:
+                    if reactive:
+                        outcome, score, err = _run_and_score_reactive(
+                            scorer, sub, cf, time_limit, sandboxed, cwd=td)
+                        if outcome != "ok" or not score:
+                            msg = err.decode(errors="replace").strip()
+                            msg = msg.splitlines()[-1][:200] if msg else ""
+                    else:
+                        out_path = Path(td) / "case.out"
+                        outcome, err = _run_case(sub, cf, out_path,
+                                                 time_limit, sandboxed)
+                        score = None
+                        if outcome == "ok":
+                            score, msg, scorer_failed = _score_case_msg(
+                                scorer, cf, out_path)
+                        elif outcome == "error":
+                            tail = err.decode(errors="replace").strip()
+                            msg = tail.splitlines()[-1][:200] if tail else ""
+                raced = (outcome == "error" and sandboxed
+                         and _BWRAP_SETUP_RACE_RE.search(err) is not None)
+                if not raced or attempt == _BWRAP_RETRY_ATTEMPTS - 1:
+                    break
+                time.sleep(_BWRAP_RETRY_BACKOFF_S)
             if outcome == "too_long":
                 outcome = "rejected"
             elif outcome not in ("tle", "error") and score is None:
                 outcome = "rejected"
-            return index, outcome, score, msg
+            return index, outcome, score, msg, scorer_failed
 
         if workers == 1:
             results = [run(w) for w in enumerate(case_files)]
@@ -700,8 +720,10 @@ class ALEBench(Benchmark):
         results.sort(key=lambda r: r[0])
 
         total, n_tle, n_error, n_rejected = 0, 0, 0, 0
-        cases, diags = [], []
-        for index, outcome, case_score, msg in results:
+        cases, diags, scorer_failures = [], [], []
+        for index, outcome, case_score, msg, scorer_failed in results:
+            if scorer_failed:
+                scorer_failures.append(f"{case_files[index].name}: {msg}")
             if outcome == "tle":
                 n_tle += 1
             elif outcome == "error":
@@ -713,6 +735,15 @@ class ALEBench(Benchmark):
             cases.append(_case_row(case_files[index], outcome, case_score))
             if msg and len(diags) < 3:
                 diags.append(f"{case_files[index].name}: {msg}")
+        if scorer_failures:
+            # the OFFICIAL SCORER failing to run is a host fault: feeding it
+            # back as a rejected/zero case would hand the agent an outage
+            # dressed up as a score
+            s = Score.invalid(
+                f"official scorer failed on {len(scorer_failures)} case(s): "
+                + "; ".join(scorer_failures[:3]), is_higher_better=hb)
+            s.details["infra"] = True
+            return s
         n = len(case_files)
         n_failed = n_tle + n_error + n_rejected
         mean = total / n
