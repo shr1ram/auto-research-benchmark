@@ -643,7 +643,11 @@ class ALEBench(Benchmark):
         counts line plus the scorer's own first diagnostics). A failed case
         is 0 in the mean on a maximise problem; on a minimise problem ANY
         failed case makes the eval invalid (a zero would read as an
-        improvement) with the failure detail in the feedback.
+        improvement) with the failure detail in the feedback. That
+        asymmetry makes invalid-attempt rates DIRECTION-DEPENDENT under
+        load — a contention TLE costs 1/n of a maximise mean but voids a
+        minimise attempt — so cross-problem analyses must stratify by
+        score direction, or the asymmetry masquerades as task difficulty.
         details["infra"] = True only for staging problems — never for
         anything the agent's code did."""
         meta = task.metadata
@@ -656,8 +660,18 @@ class ALEBench(Benchmark):
         pub = Path(task.data_dir)
         case_files = sorted((pub / "cases").glob("case_*.txt")) \
             if (pub / "cases").is_dir() else []
-        scorer = (pub / "bin" / "tester") if reactive \
-            else self._private(task.task_id) / "bin" / "vis"
+        if reactive:
+            scorer = pub / "bin" / "tester"
+        elif self.private_dir:
+            scorer = self.private_dir / task.task_id / "bin" / "vis"
+        else:
+            # _private() raises here, and public_eval must never raise
+            s = Score.invalid(
+                "no private root for the official scorer: set "
+                "ALE_PRIVATE_DATA_DIR (private/ sibling convention)",
+                is_higher_better=hb)
+            s.details["infra"] = True
+            return s
         expected = meta.get("n_public_cases")
         if not case_files or not scorer.is_file() or \
                 (expected is not None and len(case_files) != expected):
@@ -687,7 +701,7 @@ class ALEBench(Benchmark):
                     if reactive:
                         outcome, score, err = _run_and_score_reactive(
                             scorer, sub, cf, time_limit, sandboxed, cwd=td)
-                        if outcome != "ok" or not score:
+                        if outcome != "ok":
                             msg = err.decode(errors="replace").strip()
                             msg = msg.splitlines()[-1][:200] if msg else ""
                     else:

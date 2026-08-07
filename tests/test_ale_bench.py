@@ -900,6 +900,8 @@ def test_reactive_contract_promises_harness_scoring(tmp_path):
     assert "OFFICIAL judge (`tester`)" in goal
     assert "no result.json is needed" in goal
     assert "tester" in goal and "Score = N" in goal   # self-test recipe
+
+
 def test_requested_sandbox_without_bwrap_raises_at_construction(tmp_path,
                                                                 monkeypatch):
     """An explicitly requested sandbox that cannot be built must RAISE, and
@@ -1167,3 +1169,21 @@ def test_public_eval_scorer_outage_is_infra_not_a_zero(tmp_path):
     assert not s.valid
     assert s.details.get("infra") is True
     assert "scorer failed" in s.details["reason"]
+
+
+def test_public_eval_tle_case_scores_zero_in_a_maximize_mean(tmp_path):
+    pub, priv = _stage(tmp_path, time_limit=0.4)      # 0.4 * 3.0 = 1.2s cap
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("import sys, time\n"
+                   "n = sys.stdin.readline().strip()\n"
+                   "if n == '3':\n"
+                   "    time.sleep(5)\n"
+                   "print(n)\n")
+    s = bench.public_eval(task, sub)
+    assert s.valid
+    assert s.details["n_tle"] == 1
+    assert s.value == pytest.approx((4 * 2) / 2)      # tle case counts as 0
+    assert [c["status"] for c in s.details["cases"]] == ["tle", "ok"]
+    assert "time limit" in s.details["feedback"]
