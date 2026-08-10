@@ -749,12 +749,14 @@ def test_an_unretryable_race_still_records_the_error(tmp_path, monkeypatch):
                      private_data_dir=str(tmp_path / "private"),
                      sandbox=True, workers=1)
     score = bench.grade(task, sub)
-    # an invalid aggregate reports its counters inside the reason string
-    assert not score.valid and "no case produced" in score.details["reason"]
-    assert "'n_error': 3" in score.details["reason"]
-    assert f"'n_bwrap_retries': {3 * (B._BWRAP_RETRY_ATTEMPTS - 1)}" \
-        in score.details["reason"]
-    assert [c["status"] for c in score.details["cases"]] == ["error"] * 3
+    # a bwrap failure that survives the retries is now a HARNESS fault: the
+    # grade refuses loudly (infra) instead of reporting the submission as
+    # scoreless — the misread that produced campaign-wide 0% reactive
+    # completion (2026-08-10). The retries still happened (and are still
+    # the retry test's business); the AGGREGATE is an infra refusal.
+    assert not score.valid
+    assert score.details.get("infra") is True
+    assert "sandbox setup failed on 3/3" in score.details["reason"]
 
 
 def test_reactive_grading_is_identical_under_concurrency(tmp_path):
@@ -1187,3 +1189,131 @@ def test_public_eval_tle_case_scores_zero_in_a_maximize_mean(tmp_path):
     assert s.value == pytest.approx((4 * 2) / 2)      # tle case counts as 0
     assert [c["status"] for c in s.details["cases"]] == ["tle", "ok"]
     assert "time limit" in s.details["feedback"]
+
+
+# ---------------------------------------- sandbox path + infra fixes
+
+
+def test_sandbox_prefix_masks_the_resolved_path(tmp_path, monkeypatch):
+    """Myriad's $HOME is a symlink into /myriadfs: bwrap cannot mkdir mount
+    parents through a symlinked component, and a tmpfs at the symlink path
+    would not mask the REAL path anyway (agent code resolving the link
+    reads through it). The prefix must mount at the RESOLVED path — found
+    live 2026-08-10, when every sandboxed reactive public-eval case died
+    at setup and read as "rejected"."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    real = tmp_path / "real" / "prepared"
+    (real / "bin").mkdir(parents=True)
+    (real / "bin" / "tester").write_text("#!/bin/sh\n")
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real")
+    # force the prefix to build even on a bwrapless host: this test is
+    # about PATH construction, and silently passing without asserting it
+    # would leave the symlink-mount regression unguarded
+    monkeypatch.setattr(B.shutil, "which", lambda name: "/usr/bin/bwrap")
+    prefix = B._sandbox_prefix(link / "prepared")
+    assert prefix
+    joined = " ".join(prefix)
+    assert str(real.resolve()) in joined
+    assert str(link / "prepared") not in joined
+
+
+def test_public_eval_reactive_is_unmasked(tmp_path, monkeypatch):
+    """public_eval's tester lives in the PUBLIC staging — masking it is
+    what broke every reactive public eval on Myriad. grade() keeps the
+    mask (asserted via the signature default its call sites rely on)."""
+    import inspect
+
+    import arbench.benchmarks.ale_bench.benchmark as B
+    calls = []
+    # captured BEFORE the monkeypatch, or the assertion below would read
+    # the fake's own default and be vacuous
+    prod_sig = inspect.signature(B._run_and_score_reactive)
+
+    def fake(tester, submission, case_file, timeout_s, sandbox, cwd=None,
+             mask_private=True):
+        calls.append(mask_private)
+        return "ok", 10, b""
+
+    monkeypatch.setattr(B, "_run_and_score_reactive", fake)
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    s = bench.public_eval(task, sub)
+    assert s.valid
+    assert calls and all(m is False for m in calls)
+    assert prod_sig.parameters["mask_private"].default is True
+
+
+def test_reactive_bwrap_setup_failure_is_infra(tmp_path, monkeypatch):
+    """A sandbox that fails to build must surface as infra (loop kills the
+    cell loudly), never as the agent's interaction being rejected — the
+    misread that produced campaign-wide 0% reactive completion."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+
+    def fake(tester, submission, case_file, timeout_s, sandbox, cwd=None,
+             mask_private=True):
+        return ("infra", None,
+                b"bwrap: Can't mkdir parents for /x: No such file or directory")
+
+    monkeypatch.setattr(B, "_run_and_score_reactive", fake)
+    _stage(tmp_path, problem_type="reactive")
+    bench = _bench(tmp_path)
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details.get("infra") is True
+    assert "harness fault" in s.details["reason"]
+
+
+def test_batch_bwrap_setup_failure_is_infra(tmp_path, monkeypatch):
+    import arbench.benchmarks.ale_bench.benchmark as B
+
+    def fake_run_case(submission, case_file, out_path, time_limit, sandbox):
+        return ("error",
+                b"bwrap: Can't mkdir parents for /x: No such file or directory")
+
+    monkeypatch.setattr(B, "_run_case", fake_run_case)
+    _stage(tmp_path)
+    bench = _bench(tmp_path)
+    bench.sandbox = True              # the infra check is sandbox-gated
+    task = bench.load_task(TASK)
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+    s = bench.public_eval(task, sub)
+    assert not s.valid
+    assert s.details.get("infra") is True
+
+
+def test_reactive_race_stays_retryable_and_hard_failure_is_infra(
+        tmp_path, monkeypatch):
+    """A transient mount race must return "error" — the callers' retry
+    loops key on exactly that — and only a NON-race bwrap failure is
+    immediate infra. Guards the P1 from review: a broad bwrap match here
+    would void a whole eval on its first transient race."""
+    import arbench.benchmarks.ale_bench.benchmark as B
+    monkeypatch.setattr(B, "_sandbox_prefix", lambda *a, **k: [])
+    tester = tmp_path / "prepared" / "bin" / "tester"
+    tester.parent.mkdir(parents=True)
+    case = tmp_path / "case.txt"
+    case.write_text("1\n")
+    sub = tmp_path / "submission.py"
+    sub.write_text("print(1)\n")
+
+    def fake_tester(line):
+        tester.write_text('#!/bin/sh\necho "%s" >&2\nexit 1\n' % line)
+        tester.chmod(0o755)
+
+    fake_tester("bwrap: Unable to remount recursively")
+    out, score, err = B._run_and_score_reactive(
+        tester, sub, case, 5.0, True, cwd=str(tmp_path))
+    assert out == "error" and score is None
+
+    fake_tester("bwrap: Can(t mkdir parents for /x: No such file or directory")
+    out, score, err = B._run_and_score_reactive(
+        tester, sub, case, 5.0, True, cwd=str(tmp_path))
+    assert out == "infra" and score is None

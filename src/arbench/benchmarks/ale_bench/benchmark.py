@@ -162,6 +162,18 @@ _BWRAP_SETUP_RACE_RE = re.compile(
 #: attempts per case when the mount race is detected (1 would disable retry).
 #: The race is transient; after these the case records the error as it always
 #: has, so a genuinely broken submission still fails — only slower.
+#: bwrap's own setup failing for a NON-race reason (mount target missing,
+#: permissions) — after the race retries are exhausted this is an
+#: INFRASTRUCTURE failure and must never read as a property of the
+#: submission: exactly this misread turned a Myriad mount failure into
+#: "0% reactive completion" for every model in the 2026-08 campaign (1,864
+#: evals, all "rejected", all actually `bwrap: Can't mkdir parents`).
+#: Anchored to line start. In the reactive path the solver's stderr is
+#: /dev/null'd, so a match there cannot be agent-forged; in the batch path
+#: an agent CAN print such a line to its own stderr, but forging it only
+#: kills the agent's own cell loudly — a self-harm vector, not a score one.
+_BWRAP_SETUP_FAIL_RE = re.compile(rb"^bwrap: ", re.MULTILINE)
+
 _BWRAP_RETRY_ATTEMPTS = 3
 
 #: pause before re-attempting a mount-raced case: the race is mount-table
@@ -276,9 +288,18 @@ def _sandbox_prefix(private_root: Optional[Path] = None) -> list[str]:
            "--unshare-net", "--unshare-pid", "--proc", "/proc",
            "--die-with-parent"]
     if private_root is not None:
-        pr = str(private_root)
-        cmd += ["--tmpfs", pr]
-        tester = private_root / "bin" / "tester"
+        # Mount at the RESOLVED path, for two reasons (both measured on
+        # Myriad, where $HOME is a symlink into /myriadfs): bwrap cannot
+        # mkdir mount parents through a symlinked component ("Can't mkdir
+        # parents ...: No such file or directory" — every sandboxed
+        # reactive case died at setup), and a tmpfs mounted at the SYMLINK
+        # path would not mask the REAL path anyway — agent code resolving
+        # the link would read straight through the mask. Resolving covers
+        # both: the mount succeeds, and the mask sits on the only real
+        # path there is.
+        real = private_root.resolve()
+        cmd += ["--tmpfs", str(real)]
+        tester = real / "bin" / "tester"
         if tester.is_file():
             cmd += ["--ro-bind", str(tester), str(tester)]
     return cmd
@@ -420,7 +441,10 @@ def _run_case(submission: Path, case_file: Path, out_path: Path,
 #: every way a run produced no usable answer (invalid output, runaway stdout,
 #: refused interaction) — on a RELATIVE contest that is a rejection, NOT a
 #: zero score, and conflating the two inverts a minimize task's result.
-_CASE_STATUSES = ("ok", "tle", "error", "rejected")
+#: "infra" is the sandbox itself failing to build (bwrap setup) — a harness
+#: fault that voids the whole eval (details["infra"]=True) rather than
+#: entering any mean; recorded per case so the row explains the void.
+_CASE_STATUSES = ("ok", "tle", "error", "rejected", "infra")
 
 
 def _case_row(case_file: Path, status: str, score: Optional[int]) -> dict:
@@ -464,7 +488,8 @@ def _score_case(vis: Path, case_file: Path, out_path: Path) -> Optional[int]:
 
 def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
                             timeout_s: float, sandbox: bool,
-                            cwd: Optional[str] = None
+                            cwd: Optional[str] = None,
+                            mask_private: bool = True
                             ) -> tuple[str, Optional[int], bytes]:
     """Reactive case: the official `tester` reads the case on ITS stdin,
     spawns the solver, mediates the dialogue over pipes, and prints
@@ -488,9 +513,14 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
     not visible in the solver's proc, so its fds are unreachable. The solver's
     own stderr is additionally /dev/null'd (noise, not trusted). Only a
     SUCCESSFUL tester exit whose stderr carries 'Score = N' counts."""
-    # the tester's private root is masked in the sandbox (hide hidden cases)
-    # and re-binds the tester binary; the PID namespace stops proc-fd forgery.
-    private_root = tester.parent.parent
+    # GRADE path (mask_private=True): the tester's root is masked in the
+    # sandbox (hide hidden cases) and the tester binary re-bound; the PID
+    # namespace stops proc-fd forgery. PUBLIC-EVAL path (mask_private=
+    # False): the tester lives in the PUBLIC staging — there is nothing to
+    # hide, and tmpfs-masking the public tree is both semantically wrong
+    # and what broke every reactive public eval on Myriad. The PID-
+    # namespace forgery protection applies on both paths.
+    private_root = tester.parent.parent if mask_private else None
     solver = (f"exec {shlex.quote(sys.executable)} "
               f"{shlex.quote(str(submission))} 2>/dev/null")
     inner = [str(tester), "/bin/sh", "-c", solver]
@@ -516,6 +546,17 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
             return "tle", None, b""
     tail = (err or b"")[-_STDERR_KEEP_BYTES:]
     if proc.returncode != 0:
+        if sandbox and _BWRAP_SETUP_RACE_RE.search(tail):
+            # the TRANSIENT mount race stays retryable: "error" is what the
+            # callers' retry loops key on, and only an exhausted race is
+            # then classified infra by them
+            return "error", None, tail
+        if sandbox and _BWRAP_SETUP_FAIL_RE.search(tail):
+            # a NON-race sandbox build failure: harness fault, never the
+            # agent's interaction. Trustworthy on this path — the solver's
+            # stderr is /dev/null'd, so only bwrap and the official tester
+            # write to this stream.
+            return "infra", None, tail
         # the tester exits nonzero on a rejected interaction (invalid move,
         # solver crash) — don't trust a score line from a failed run
         return "rejected", None, tail
@@ -562,9 +603,12 @@ def _grade_one_case(index: int, case_file: Path, submission: Path,
             break
         retries += 1
         time.sleep(_BWRAP_RETRY_BACKOFF_S)
+    if sandboxed and outcome == "error" \
+            and _BWRAP_SETUP_FAIL_RE.search(err):
+        outcome = "infra"                # sandbox setup died: harness fault
     if outcome == "too_long":
         outcome = "rejected"             # runaway printer: rejected case
-    elif outcome not in ("tle", "error") and score is None:
+    elif outcome not in ("tle", "error", "infra") and score is None:
         outcome = "rejected"             # invalid answer / no score line
     return index, outcome, score, retries
 
@@ -699,8 +743,13 @@ class ALEBench(Benchmark):
                 msg, scorer_failed = "", False
                 with tempfile.TemporaryDirectory(prefix="ale-pubeval-") as td:
                     if reactive:
+                        # mask_private=False: this tester and its cases are
+                        # the PUBLIC staging — nothing to hide, and masking
+                        # it is what broke every reactive public eval on
+                        # Myriad (the forgery-stopping PID namespace stays)
                         outcome, score, err = _run_and_score_reactive(
-                            scorer, sub, cf, time_limit, sandboxed, cwd=td)
+                            scorer, sub, cf, time_limit, sandboxed, cwd=td,
+                            mask_private=False)
                         if outcome != "ok":
                             msg = err.decode(errors="replace").strip()
                             msg = msg.splitlines()[-1][:200] if msg else ""
@@ -720,9 +769,17 @@ class ALEBench(Benchmark):
                 if not raced or attempt == _BWRAP_RETRY_ATTEMPTS - 1:
                     break
                 time.sleep(_BWRAP_RETRY_BACKOFF_S)
+            if sandboxed and outcome == "error" \
+                    and _BWRAP_SETUP_FAIL_RE.search(err):
+                # batch: the sandbox failed to build and the race retries
+                # did not clear it — harness fault. (An agent CAN print a
+                # bwrap-shaped line to its own stderr; forging it only
+                # kills the agent's own cell loudly — self-harm, not a
+                # score vector.)
+                outcome = "infra"
             if outcome == "too_long":
                 outcome = "rejected"
-            elif outcome not in ("tle", "error") and score is None:
+            elif outcome not in ("tle", "error", "infra") and score is None:
                 outcome = "rejected"
             return index, outcome, score, msg, scorer_failed
 
@@ -733,8 +790,8 @@ class ALEBench(Benchmark):
                 results = list(pool.map(run, enumerate(case_files)))
         results.sort(key=lambda r: r[0])
 
-        total, n_tle, n_error, n_rejected = 0, 0, 0, 0
-        cases, diags, scorer_failures = [], [], []
+        total, n_tle, n_error, n_rejected, n_infra = 0, 0, 0, 0, 0
+        cases, diags, scorer_failures, infra_diags = [], [], [], []
         for index, outcome, case_score, msg, scorer_failed in results:
             if scorer_failed:
                 scorer_failures.append(f"{case_files[index].name}: {msg}")
@@ -744,6 +801,10 @@ class ALEBench(Benchmark):
                 n_error += 1
             elif outcome == "rejected":
                 n_rejected += 1
+            elif outcome == "infra":
+                n_infra += 1
+                if len(infra_diags) < 3:
+                    infra_diags.append(f"{case_files[index].name}: {msg}")
             else:
                 total += case_score
             cases.append(_case_row(case_files[index], outcome, case_score))
@@ -759,19 +820,34 @@ class ALEBench(Benchmark):
             s.details["infra"] = True
             return s
         n = len(case_files)
-        n_failed = n_tle + n_error + n_rejected
+        n_failed = n_tle + n_error + n_rejected + n_infra
         mean = total / n
         summary = (f"official public eval: {n - n_failed}/{n} cases scored"
                    + (f"; {n_tle} over the "
                       f"{time_limit:.0f}s time limit" if n_tle else "")
                    + (f"; {n_rejected} rejected" if n_rejected else "")
                    + (f"; {n_error} crashed" if n_error else "")
+                   + (f"; {n_infra} sandbox-failed" if n_infra else "")
                    + (". " + " | ".join(diags) if diags else ""))
         details = {"n_cases": n, "n_tle": n_tle, "n_error": n_error,
-                   "n_rejected": n_rejected, "time_limit_s": time_limit,
+                   "n_rejected": n_rejected, "n_infra": n_infra,
+                   "time_limit_s": time_limit,
                    "python_time_scale": PYTHON_TIME_SCALE,
                    "sandboxed": sandboxed, "public_eval": True,
                    "feedback": summary, "cases": cases}
+        if n_infra:
+            # the SANDBOX failing to build is a host/harness fault: feeding
+            # it back as rejected cases would hand the agent an outage
+            # dressed up as its own failure — the exact misread that turned
+            # a Myriad mount bug into "0% reactive completion" campaign-wide.
+            # Full details ride along so the void is diagnosable per case.
+            s = Score.invalid(
+                f"sandbox setup failed on {n_infra}/{n} case(s) — harness "
+                f"fault, not the submission: " + "; ".join(infra_diags),
+                is_higher_better=hb)
+            s.details.update(details)
+            s.details["infra"] = True
+            return s
         if n_failed == n:
             s = Score.invalid(f"no case produced a scoreable output — "
                               f"{summary}", is_higher_better=hb)
@@ -936,6 +1012,7 @@ class ALEBench(Benchmark):
         results.sort(key=lambda r: r[0])
 
         total, n_tle, n_error, n_rejected, n_bwrap_retries = 0, 0, 0, 0, 0
+        n_infra = 0
         # Per-case rows, in case_files order. The SUM alone is not enough to
         # reconstruct the official ALE-Bench metric: the relative contests
         # re-normalise per case, and there a REJECTED case is not a zero-cost
@@ -951,6 +1028,8 @@ class ALEBench(Benchmark):
                 n_error += 1
             elif outcome == "rejected":
                 n_rejected += 1
+            elif outcome == "infra":
+                n_infra += 1
             else:
                 total += case_score
             cases.append(_case_row(case_files[index], outcome, case_score))
@@ -966,11 +1045,23 @@ class ALEBench(Benchmark):
                    # nonzero means the sandbox misfired, never that the
                    # submission did
                    "n_bwrap_retries": n_bwrap_retries,
+                   "n_infra": n_infra,
                    "problem_type": meta.get("problem_type", "batch"),
                    "score_type": meta.get("score_type")}
         n_failed = n_tle + n_error + n_rejected
         # the reason strings interpolate the AGGREGATE details only: `cases`
         # is per-case and would bloat a human-readable reason into KBs
+        if n_infra:
+            # sandbox setup failing under GRADE must refuse loudly rather
+            # than record a silent zero/None held-out for a real
+            # submission; the per-case rows ride along so the void is
+            # diagnosable
+            s = Score.invalid(
+                f"sandbox setup failed on {n_infra}/{len(case_files)} "
+                f"private case(s) — harness fault, not the submission "
+                f"({details})", is_higher_better=hb, cases=cases)
+            s.details["infra"] = True
+            return s
         if n_failed == len(case_files):
             return Score.invalid("no case produced a scoreable output "
                                  f"({details})", is_higher_better=hb,
