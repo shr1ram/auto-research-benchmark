@@ -546,8 +546,13 @@ def _run_and_score_reactive(tester: Path, submission: Path, case_file: Path,
             return "tle", None, b""
     tail = (err or b"")[-_STDERR_KEEP_BYTES:]
     if proc.returncode != 0:
+        if sandbox and _BWRAP_SETUP_RACE_RE.search(tail):
+            # the TRANSIENT mount race stays retryable: "error" is what the
+            # callers' retry loops key on, and only an exhausted race is
+            # then classified infra by them
+            return "error", None, tail
         if sandbox and _BWRAP_SETUP_FAIL_RE.search(tail):
-            # the sandbox itself failed to build: harness fault, never the
+            # a NON-race sandbox build failure: harness fault, never the
             # agent's interaction. Trustworthy on this path — the solver's
             # stderr is /dev/null'd, so only bwrap and the official tester
             # write to this stream.
@@ -805,17 +810,6 @@ class ALEBench(Benchmark):
             cases.append(_case_row(case_files[index], outcome, case_score))
             if msg and len(diags) < 3:
                 diags.append(f"{case_files[index].name}: {msg}")
-        if n_infra:
-            # the SANDBOX failing to build is a host/harness fault: feeding
-            # it back as rejected cases would hand the agent an outage
-            # dressed up as its own failure — the exact misread that turned
-            # a Myriad mount bug into "0% reactive completion" campaign-wide
-            s = Score.invalid(
-                f"sandbox setup failed on {n_infra}/{len(case_files)} "
-                f"case(s) — harness fault, not the submission: "
-                + "; ".join(infra_diags), is_higher_better=hb)
-            s.details["infra"] = True
-            return s
         if scorer_failures:
             # the OFFICIAL SCORER failing to run is a host fault: feeding it
             # back as a rejected/zero case would hand the agent an outage
@@ -826,19 +820,34 @@ class ALEBench(Benchmark):
             s.details["infra"] = True
             return s
         n = len(case_files)
-        n_failed = n_tle + n_error + n_rejected
+        n_failed = n_tle + n_error + n_rejected + n_infra
         mean = total / n
         summary = (f"official public eval: {n - n_failed}/{n} cases scored"
                    + (f"; {n_tle} over the "
                       f"{time_limit:.0f}s time limit" if n_tle else "")
                    + (f"; {n_rejected} rejected" if n_rejected else "")
                    + (f"; {n_error} crashed" if n_error else "")
+                   + (f"; {n_infra} sandbox-failed" if n_infra else "")
                    + (". " + " | ".join(diags) if diags else ""))
         details = {"n_cases": n, "n_tle": n_tle, "n_error": n_error,
-                   "n_rejected": n_rejected, "time_limit_s": time_limit,
+                   "n_rejected": n_rejected, "n_infra": n_infra,
+                   "time_limit_s": time_limit,
                    "python_time_scale": PYTHON_TIME_SCALE,
                    "sandboxed": sandboxed, "public_eval": True,
                    "feedback": summary, "cases": cases}
+        if n_infra:
+            # the SANDBOX failing to build is a host/harness fault: feeding
+            # it back as rejected cases would hand the agent an outage
+            # dressed up as its own failure — the exact misread that turned
+            # a Myriad mount bug into "0% reactive completion" campaign-wide.
+            # Full details ride along so the void is diagnosable per case.
+            s = Score.invalid(
+                f"sandbox setup failed on {n_infra}/{n} case(s) — harness "
+                f"fault, not the submission: " + "; ".join(infra_diags),
+                is_higher_better=hb)
+            s.details.update(details)
+            s.details["infra"] = True
+            return s
         if n_failed == n:
             s = Score.invalid(f"no case produced a scoreable output — "
                               f"{summary}", is_higher_better=hb)
@@ -1024,15 +1033,6 @@ class ALEBench(Benchmark):
             else:
                 total += case_score
             cases.append(_case_row(case_files[index], outcome, case_score))
-        if n_infra:
-            # sandbox setup failing under GRADE must refuse loudly rather
-            # than record a silent zero/None held-out for a real submission
-            s = Score.invalid(
-                f"sandbox setup failed on {n_infra}/{len(case_files)} "
-                f"private case(s) — harness fault, not the submission",
-                is_higher_better=hb)
-            s.details["infra"] = True
-            return s
         details = {"n_cases": len(case_files), "n_tle": n_tle,
                    "n_error": n_error, "n_rejected": n_rejected,
                    "seed_regime": meta.get("seed_regime"),
@@ -1045,11 +1045,23 @@ class ALEBench(Benchmark):
                    # nonzero means the sandbox misfired, never that the
                    # submission did
                    "n_bwrap_retries": n_bwrap_retries,
+                   "n_infra": n_infra,
                    "problem_type": meta.get("problem_type", "batch"),
                    "score_type": meta.get("score_type")}
         n_failed = n_tle + n_error + n_rejected
         # the reason strings interpolate the AGGREGATE details only: `cases`
         # is per-case and would bloat a human-readable reason into KBs
+        if n_infra:
+            # sandbox setup failing under GRADE must refuse loudly rather
+            # than record a silent zero/None held-out for a real
+            # submission; the per-case rows ride along so the void is
+            # diagnosable
+            s = Score.invalid(
+                f"sandbox setup failed on {n_infra}/{len(case_files)} "
+                f"private case(s) — harness fault, not the submission "
+                f"({details})", is_higher_better=hb, cases=cases)
+            s.details["infra"] = True
+            return s
         if n_failed == len(case_files):
             return Score.invalid("no case produced a scoreable output "
                                  f"({details})", is_higher_better=hb,
